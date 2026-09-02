@@ -1,1 +1,117 @@
 
+# ============================================================================
+# REZA BOT V50.7 — PROJECT 3 — BOT_A (HH:00)
+# ============================================================================
+#
+# این Workflow هر ساعت در دقیقه 00 اجرا می‌شود
+# و ربات BOT_A را با تنظیمات HH:00 اجرا می‌کند
+#
+# ============================================================================
+
+name: REZA BOT A (HH:00)
+
+on:
+  # ✅ اجرا در زمان‌های مشخص (هر ساعت در دقیقه 00)
+  schedule:
+    - cron: '0 * * * *'
+  
+  # ✅ اجرای دستی از طریق GitHub Actions UI
+  workflow_dispatch:
+
+  # ✅ اجرا روی push به شاخه main (برای تست)
+  push:
+    branches: [ main ]
+
+jobs:
+  run-bot-a:
+    name: Run REZA BOT A (HH:00)
+    runs-on: ubuntu-latest
+    
+    steps:
+      # ============================================================
+      # 1. دریافت کد از مخزن
+      # ============================================================
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ============================================================
+      # 2. نصب Python
+      # ============================================================
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      # ============================================================
+      # 3. نصب وابستگی‌ها
+      # ============================================================
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      # ============================================================
+      # 4. ایجاد دایرکتوری داده
+      # ============================================================
+      - name: Create data directory
+        run: |
+          mkdir -p reza_bot_v50_7_data
+
+      # ============================================================
+      # 5. اجرای ربات BOT_A (HH:00)
+      # ============================================================
+      - name: Run BOT_A (HH:00)
+        run: |
+          echo "=========================================="
+          echo "🔥 STARTING REZA BOT A (HH:00)"
+          echo "=========================================="
+          echo "Time: $(date -u)"
+          echo "=========================================="
+          python reza_bot_v50_7.py
+        env:
+          # 🔑 API Keys از Secrets
+          XT_API_KEY: ${{ secrets.XT_API_KEY }}
+          XT_API_SECRET: ${{ secrets.XT_API_SECRET }}
+          XT_MARGIN_USDT: ${{ secrets.XT_MARGIN_USDT }}
+          XT_LEVERAGE: ${{ secrets.XT_LEVERAGE }}
+          
+          # 🌐 تنظیمات پلتفرم
+          REZA_PLATFORM_URL: ${{ secrets.REZA_PLATFORM_URL }}
+          REZA_PLATFORM_ENABLED: ${{ secrets.REZA_PLATFORM_ENABLED }}
+          REZA_PLATFORM_TIMEOUT: ${{ secrets.REZA_PLATFORM_TIMEOUT }}
+          REZA_PLATFORM_RETRY_SECONDS: ${{ secrets.REZA_PLATFORM_RETRY_SECONDS }}
+          REZA_PLATFORM_HEALTH_INTERVAL: ${{ secrets.REZA_PLATFORM_HEALTH_INTERVAL }}
+          
+          # 📊 تنظیمات ربات
+          XT_BASE_URL: ${{ secrets.XT_BASE_URL }}
+
+      # ============================================================
+      # 6. ذخیره لاگ‌ها به عنوان Artifact
+      # ============================================================
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bot-a-logs-${{ github.run_id }}
+          path: |
+            reza_bot_v50_7_data/
+            *.log
+            *.csv
+            *.json
+            *.jsonl
+          retention-days: 7
+          compression-level: 6
+
+      # ============================================================
+      # 7. ارسال نوتیفیکیشن در صورت خطا
+      # ============================================================
+      - name: Send notification on failure
+        if: failure()
+        run: |
+          echo "❌ BOT_A (HH:00) FAILED!"
+          echo "Run ID: ${{ github.run_id }}"
+          echo "Time: $(date -u)"
+          # می‌توانید وب‌هوک تلگرام یا دیسکورد اضافه کنید
