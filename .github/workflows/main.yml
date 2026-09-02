@@ -1,151 +1,167 @@
 # ============================================================================
-# REZA BOT V50.7 — WORKFLOW (قابل استفاده برای همه ربات‌ها)
+# REZA BOT WORKFLOW
 # ============================================================================
 #
-# این Workflow برای اجرای هر ربات REZA BOT طراحی شده است
-# کافی است نام فایل ربات را در بخش run تغییر دهید
+# شامل: ربات (reza_bot_v50_7.txt) و پلتفرم (reza_execution_platform_v1.txt)
 #
 # ============================================================================
 
 name: REZA BOT WORKFLOW
 
 on:
-  # ✅ اجرا در زمان‌های مشخص (با Cron)
+  # ✅ اجرا در زمان‌های مشخص
   schedule:
-    - cron: '0 * * * *'      # هر ساعت در دقیقه 00 (برای BOT_A)
-    - cron: '15 * * * *'     # هر ساعت در دقیقه 15 (برای BOT_B)
-    - cron: '30 * * * *'     # هر ساعت در دقیقه 30 (برای ربات‌های دیگر)
-    - cron: '45 * * * *'     # هر ساعت در دقیقه 45 (برای ربات‌های دیگر)
+    - cron: '0 * * * *'      # هر ساعت در دقیقه 00 (برای ربات)
+    - cron: '*/5 * * * *'    # هر 5 دقیقه (برای پلتفرم)
   
-  # ✅ اجرای دستی از طریق GitHub Actions UI
+  # ✅ اجرای دستی
   workflow_dispatch:
     inputs:
-      bot_file:
-        description: 'نام فایل ربات (مثلاً reza_bot_v50_7.py)'
+      project:
+        description: 'پروژه مورد نظر برای اجرا'
         required: true
-        default: 'reza_bot_v50_7.py'
-        type: string
-      data_dir:
-        description: 'نام دایرکتوری داده (مثلاً reza_bot_v50_7_data)'
-        required: true
-        default: 'reza_bot_v50_7_data'
-        type: string
+        default: 'bot'
+        type: choice
+        options:
+          - bot
+          - platform
+          - all
 
-  # ✅ اجرا روی push به شاخه main
+  # ✅ اجرا روی push
   push:
     branches: [ main ]
 
 jobs:
-  run-reza-bot:
+  # ============================================================
+  # JOB 1: REZA BOT
+  # ============================================================
+  run-bot:
     name: Run REZA BOT
     runs-on: ubuntu-latest
-    
-    strategy:
-      matrix:
-        # ✅ می‌توانید چندین ربات را همزمان اجرا کنید
-        bot:
-          - file: 'reza_bot_v50_7.py'
-            data_dir: 'reza_bot_v50_7_data'
-            description: 'BOT_A (HH:00)'
-          - file: 'reza_bot_v50_7_hh15.py'
-            data_dir: 'reza_bot_v50_7_data_hh15'
-            description: 'BOT_B (HH:15)'
-          # برای اضافه کردن ربات جدید، فقط یک خط جدید اضافه کنید:
-          # - file: 'reza_bot_v50_7_hh30.py'
-          #   data_dir: 'reza_bot_v50_7_data_hh30'
-          #   description: 'BOT_C (HH:30)'
+    if: |
+      github.event_name == 'schedule' && github.event.schedule == '0 * * * *' ||
+      github.event_name == 'workflow_dispatch' && inputs.project == 'bot' ||
+      github.event_name == 'workflow_dispatch' && inputs.project == 'all' ||
+      github.event_name == 'push'
 
     steps:
-      # ============================================================
-      # 1. دریافت کد از مخزن
-      # ============================================================
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      # ============================================================
-      # 2. نصب Python
-      # ============================================================
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-          # در صورت وجود فایل requirements.txt، کش فعال می‌شود
           cache: 'pip'
 
-      # ============================================================
-      # 3. نصب وابستگی‌ها
-      # ============================================================
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # اگر فایل requirements.txt وجود دارد، از آن استفاده کن
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           else
             pip install requests
           fi
 
-      # ============================================================
-      # 4. ایجاد دایرکتوری داده
-      # ============================================================
       - name: Create data directory
-        run: |
-          mkdir -p ${{ matrix.bot.data_dir }}
-          echo "📁 Data directory: ${{ matrix.bot.data_dir }}"
+        run: mkdir -p reza_bot_v50_7_data
 
-      # ============================================================
-      # 5. اجرای ربات
-      # ============================================================
-      - name: Run ${{ matrix.bot.description }}
+      - name: Run REZA BOT
         run: |
           echo "=========================================="
-          echo "🔥 STARTING ${{ matrix.bot.description }}"
+          echo "🔥 STARTING REZA BOT"
           echo "=========================================="
           echo "Time: $(date -u)"
-          echo "File: ${{ matrix.bot.file }}"
-          echo "Data: ${{ matrix.bot.data_dir }}"
           echo "=========================================="
-          python ${{ matrix.bot.file }}
+          python reza_bot_v50_7.txt
         env:
-          # 🔑 API Keys
           XT_API_KEY: ${{ secrets.XT_API_KEY }}
           XT_API_SECRET: ${{ secrets.XT_API_SECRET }}
           XT_MARGIN_USDT: ${{ secrets.XT_MARGIN_USDT }}
           XT_LEVERAGE: ${{ secrets.XT_LEVERAGE }}
-          
-          # 🌐 تنظیمات پلتفرم
           REZA_PLATFORM_URL: ${{ secrets.REZA_PLATFORM_URL }}
           REZA_PLATFORM_ENABLED: ${{ secrets.REZA_PLATFORM_ENABLED }}
-          REZA_PLATFORM_TIMEOUT: ${{ secrets.REZA_PLATFORM_TIMEOUT }}
-          REZA_PLATFORM_RETRY_SECONDS: ${{ secrets.REZA_PLATFORM_RETRY_SECONDS }}
-          REZA_PLATFORM_HEALTH_INTERVAL: ${{ secrets.REZA_PLATFORM_HEALTH_INTERVAL }}
-          
-          # 📊 تنظیمات ربات
-          XT_BASE_URL: ${{ secrets.XT_BASE_URL }}
 
-      # ============================================================
-      # 6. ذخیره لاگ‌ها به عنوان Artifact
-      # ============================================================
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: logs-${{ matrix.bot.data_dir }}-${{ github.run_id }}
+          name: bot-logs-${{ github.run_id }}
           path: |
-            ${{ matrix.bot.data_dir }}/
-            *.log
+            reza_bot_v50_7_data/
           retention-days: 7
-          compression-level: 6
 
-      # ============================================================
-      # 7. ارسال نوتیفیکیشن در صورت خطا
-      # ============================================================
       - name: Send notification on failure
         if: failure()
         run: |
-          echo "❌ ${{ matrix.bot.description }} FAILED!"
+          echo "❌ REZA BOT FAILED!"
           echo "Run ID: ${{ github.run_id }}"
           echo "Time: $(date -u)"
-          echo "Bot File: ${{ matrix.bot.file }}"
+
+  # ============================================================
+  # JOB 2: REZA EXECUTION PLATFORM
+  # ============================================================
+  run-platform:
+    name: Run REZA EXECUTION PLATFORM
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'schedule' && github.event.schedule == '*/5 * * * *' ||
+      github.event_name == 'workflow_dispatch' && inputs.project == 'platform' ||
+      github.event_name == 'workflow_dispatch' && inputs.project == 'all' ||
+      github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            pip install requests
+          fi
+
+      - name: Create data directory
+        run: mkdir -p reza_execution_platform_v1_data
+
+      - name: Run REZA EXECUTION PLATFORM
+        run: |
+          echo "=========================================="
+          echo "🔥 STARTING REZA EXECUTION PLATFORM"
+          echo "=========================================="
+          echo "Time: $(date -u)"
+          echo "=========================================="
+          python reza_execution_platform_v1.txt
+        env:
+          XT_API_KEY: ${{ secrets.XT_API_KEY }}
+          XT_API_SECRET: ${{ secrets.XT_API_SECRET }}
+          XT_MARGIN_USDT: ${{ secrets.XT_MARGIN_USDT }}
+          XT_LEVERAGE: ${{ secrets.XT_LEVERAGE }}
+          REZA_WEBHOOK_ENABLED: ${{ secrets.REZA_WEBHOOK_ENABLED }}
+          REZA_WEBHOOK_URL: ${{ secrets.REZA_WEBHOOK_URL }}
+          REZA_WEBHOOK_SECRET: ${{ secrets.REZA_WEBHOOK_SECRET }}
+          REZA_WEBHOOK_TIMEOUT: ${{ secrets.REZA_WEBHOOK_TIMEOUT }}
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: platform-logs-${{ github.run_id }}
+          path: |
+            reza_execution_platform_v1_data/
+          retention-days: 7
+
+      - name: Send notification on failure
+        if: failure()
+        run: |
+          echo "❌ REZA EXECUTION PLATFORM FAILED!"
+          echo "Run ID: ${{ github.run_id }}"
+          echo "Time: $(date -u)"
