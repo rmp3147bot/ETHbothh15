@@ -1,59 +1,52 @@
 # ============================================================================
-# REZA BOT WORKFLOW
-# ============================================================================
-#
-# شامل: ربات (reza_bot_v50_7.txt) و پلتفرم (reza_execution_platform_v1.txt)
-#
+# REZA BOT + PLATFORM — اجرای همزمان با نمایش لاگ لایو
 # ============================================================================
 
-name: REZA BOT WORKFLOW
+name: REZA BOT & PLATFORM
 
 on:
   # ✅ اجرا در زمان‌های مشخص
   schedule:
-    - cron: '0 * * * *'      # هر ساعت در دقیقه 00 (برای ربات)
-    - cron: '*/5 * * * *'    # هر 5 دقیقه (برای پلتفرم)
+    - cron: '0 * * * *'      # هر ساعت در دقیقه 00
   
   # ✅ اجرای دستی
   workflow_dispatch:
-    inputs:
-      project:
-        description: 'پروژه مورد نظر برای اجرا'
-        required: true
-        default: 'bot'
-        type: choice
-        options:
-          - bot
-          - platform
-          - all
 
   # ✅ اجرا روی push
   push:
     branches: [ main ]
 
 jobs:
-  # ============================================================
-  # JOB 1: REZA BOT
-  # ============================================================
-  run-bot:
-    name: Run REZA BOT
+  run-all:
+    name: Run REZA BOT & PLATFORM
     runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'schedule' && github.event.schedule == '0 * * * *' ||
-      github.event_name == 'workflow_dispatch' && inputs.project == 'bot' ||
-      github.event_name == 'workflow_dispatch' && inputs.project == 'all' ||
-      github.event_name == 'push'
+    
+    # ✅ اجرا با ترمینال تعاملی برای نمایش لاگ لایو
+    defaults:
+      run:
+        shell: bash
 
     steps:
+      # ============================================================
+      # 1. دریافت کد از مخزن
+      # ============================================================
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
+      # ============================================================
+      # 2. نصب Python
+      # ============================================================
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
           cache: 'pip'
 
+      # ============================================================
+      # 3. نصب وابستگی‌ها
+      # ============================================================
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -63,105 +56,102 @@ jobs:
             pip install requests
           fi
 
-      - name: Create data directory
-        run: mkdir -p reza_bot_v50_7_data
+      # ============================================================
+      # 4. ایجاد دایرکتوری‌های داده
+      # ============================================================
+      - name: Create data directories
+        run: |
+          mkdir -p reza_bot_v50_7_data
+          mkdir -p reza_execution_platform_v1_data
+          echo "✅ Data directories created"
 
-      - name: Run REZA BOT
+      # ============================================================
+      # 5. اجرای همزمان ربات و پلتفرم با نمایش لاگ لایو
+      # ============================================================
+      - name: Run REZA BOT & PLATFORM
         run: |
           echo "=========================================="
-          echo "🔥 STARTING REZA BOT"
+          echo "🔥 STARTING REZA BOT & PLATFORM"
           echo "=========================================="
           echo "Time: $(date -u)"
           echo "=========================================="
-          python reza_bot_v50_7.txt
+          echo ""
+          
+          # اجرای ربات در پس‌زمینه با نمایش خروجی
+          echo "▶️ Starting REZA BOT..."
+          python reza_bot_v50_7.txt &
+          BOT_PID=$!
+          
+          # اجرای پلتفرم در پس‌زمینه با نمایش خروجی
+          echo "▶️ Starting REZA EXECUTION PLATFORM..."
+          python reza_execution_platform_v1.txt &
+          PLATFORM_PID=$!
+          
+          echo ""
+          echo "✅ Both processes started!"
+          echo "   BOT PID: $BOT_PID"
+          echo "   PLATFORM PID: $PLATFORM_PID"
+          echo ""
+          echo "=========================================="
+          echo "📡 LIVE LOGS (Press Ctrl+C to stop)"
+          echo "=========================================="
+          echo ""
+          
+          # نمایش لاگ‌های هر دو به صورت لایو
+          # با استفاده از tail روی فایل‌های لاگ (اگر لاگ فایل داشته باشند)
+          # یا با wait برای نمایش خروجی مستقیم
+          
+          # روش 1: اگر ربات و پلتفرم به فایل لاگ می‌نویسند
+          # tail -f reza_bot_v50_7_data/*.log &
+          # tail -f reza_execution_platform_v1_data/*.log &
+          
+          # روش 2: نمایش خروجی مستقیم با wait
+          wait $BOT_PID &
+          wait $PLATFORM_PID &
+          
+          # نگه داشتن اجرا برای نمایش لاگ‌ها
+          wait
+          
         env:
+          # 🔑 تنظیمات ربات
           XT_API_KEY: ${{ secrets.XT_API_KEY }}
           XT_API_SECRET: ${{ secrets.XT_API_SECRET }}
           XT_MARGIN_USDT: ${{ secrets.XT_MARGIN_USDT }}
           XT_LEVERAGE: ${{ secrets.XT_LEVERAGE }}
           REZA_PLATFORM_URL: ${{ secrets.REZA_PLATFORM_URL }}
           REZA_PLATFORM_ENABLED: ${{ secrets.REZA_PLATFORM_ENABLED }}
-
-      - name: Upload logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: bot-logs-${{ github.run_id }}
-          path: |
-            reza_bot_v50_7_data/
-          retention-days: 7
-
-      - name: Send notification on failure
-        if: failure()
-        run: |
-          echo "❌ REZA BOT FAILED!"
-          echo "Run ID: ${{ github.run_id }}"
-          echo "Time: $(date -u)"
-
-  # ============================================================
-  # JOB 2: REZA EXECUTION PLATFORM
-  # ============================================================
-  run-platform:
-    name: Run REZA EXECUTION PLATFORM
-    runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'schedule' && github.event.schedule == '*/5 * * * *' ||
-      github.event_name == 'workflow_dispatch' && inputs.project == 'platform' ||
-      github.event_name == 'workflow_dispatch' && inputs.project == 'all' ||
-      github.event_name == 'push'
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-          cache: 'pip'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          else
-            pip install requests
-          fi
-
-      - name: Create data directory
-        run: mkdir -p reza_execution_platform_v1_data
-
-      - name: Run REZA EXECUTION PLATFORM
-        run: |
-          echo "=========================================="
-          echo "🔥 STARTING REZA EXECUTION PLATFORM"
-          echo "=========================================="
-          echo "Time: $(date -u)"
-          echo "=========================================="
-          python reza_execution_platform_v1.txt
-        env:
-          XT_API_KEY: ${{ secrets.XT_API_KEY }}
-          XT_API_SECRET: ${{ secrets.XT_API_SECRET }}
-          XT_MARGIN_USDT: ${{ secrets.XT_MARGIN_USDT }}
-          XT_LEVERAGE: ${{ secrets.XT_LEVERAGE }}
+          XT_BASE_URL: ${{ secrets.XT_BASE_URL }}
+          
+          # 🔑 تنظیمات پلتفرم
           REZA_WEBHOOK_ENABLED: ${{ secrets.REZA_WEBHOOK_ENABLED }}
           REZA_WEBHOOK_URL: ${{ secrets.REZA_WEBHOOK_URL }}
           REZA_WEBHOOK_SECRET: ${{ secrets.REZA_WEBHOOK_SECRET }}
           REZA_WEBHOOK_TIMEOUT: ${{ secrets.REZA_WEBHOOK_TIMEOUT }}
+          
+          # 📊 تنظیمات عمومی
+          PYTHONUNBUFFERED: 1  # ✅ نمایش لحظه‌ای خروجی
 
+      # ============================================================
+      # 6. ذخیره لاگ‌ها به عنوان Artifact
+      # ============================================================
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: platform-logs-${{ github.run_id }}
+          name: all-logs-${{ github.run_id }}
           path: |
+            reza_bot_v50_7_data/
             reza_execution_platform_v1_data/
+            *.log
           retention-days: 7
+          compression-level: 6
 
+      # ============================================================
+      # 7. ارسال نوتیفیکیشن در صورت خطا
+      # ============================================================
       - name: Send notification on failure
         if: failure()
         run: |
-          echo "❌ REZA EXECUTION PLATFORM FAILED!"
+          echo "❌ REZA BOT & PLATFORM FAILED!"
           echo "Run ID: ${{ github.run_id }}"
           echo "Time: $(date -u)"
