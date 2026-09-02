@@ -1,18 +1,13 @@
 # ============================================================================
-# REZA BOT + PLATFORM — اجرای همزمان با نمایش لاگ لایو
+# REZA BOT & PLATFORM — با نمایش لاگ لایو
 # ============================================================================
 
 name: REZA BOT & PLATFORM
 
 on:
-  # ✅ اجرا در زمان‌های مشخص
   schedule:
-    - cron: '0 * * * *'      # هر ساعت در دقیقه 00
-  
-  # ✅ اجرای دستی
+    - cron: '0 * * * *'
   workflow_dispatch:
-
-  # ✅ اجرا روی push
   push:
     branches: [ main ]
 
@@ -20,20 +15,13 @@ jobs:
   run-all:
     name: Run REZA BOT & PLATFORM
     runs-on: ubuntu-latest
-    
-    # ✅ اجرا با ترمینال تعاملی برای نمایش لاگ لایو
-    defaults:
-      run:
-        shell: bash
 
     steps:
       # ============================================================
-      # 1. دریافت کد از مخزن
+      # 1. دریافت کد
       # ============================================================
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       # ============================================================
       # 2. نصب Python
@@ -42,7 +30,6 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-          cache: 'pip'
 
       # ============================================================
       # 3. نصب وابستگی‌ها
@@ -50,11 +37,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          else
-            pip install requests
-          fi
+          pip install requests
 
       # ============================================================
       # 4. ایجاد دایرکتوری‌های داده
@@ -63,10 +46,9 @@ jobs:
         run: |
           mkdir -p reza_bot_v50_7_data
           mkdir -p reza_execution_platform_v1_data
-          echo "✅ Data directories created"
 
       # ============================================================
-      # 5. اجرای همزمان ربات و پلتفرم با نمایش لاگ لایو
+      # 5. اجرا با نمایش لاگ لایو
       # ============================================================
       - name: Run REZA BOT & PLATFORM
         run: |
@@ -77,42 +59,32 @@ jobs:
           echo "=========================================="
           echo ""
           
-          # اجرای ربات در پس‌زمینه با نمایش خروجی
-          echo "▶️ Starting REZA BOT..."
-          python reza_bot_v50_7.txt &
+          # ✅ اجرای ربات با نمایش خروجی لحظه‌ای
+          python -u reza_bot_v50_7.txt &
           BOT_PID=$!
           
-          # اجرای پلتفرم در پس‌زمینه با نمایش خروجی
-          echo "▶️ Starting REZA EXECUTION PLATFORM..."
-          python reza_execution_platform_v1.txt &
+          # ✅ اجرای پلتفرم با نمایش خروجی لحظه‌ای
+          python -u reza_execution_platform_v1.txt &
           PLATFORM_PID=$!
           
+          echo "✅ BOT PID: $BOT_PID"
+          echo "✅ PLATFORM PID: $PLATFORM_PID"
           echo ""
-          echo "✅ Both processes started!"
-          echo "   BOT PID: $BOT_PID"
-          echo "   PLATFORM PID: $PLATFORM_PID"
-          echo ""
-          echo "=========================================="
-          echo "📡 LIVE LOGS (Press Ctrl+C to stop)"
+          echo "📡 LIVE LOGS:"
           echo "=========================================="
           echo ""
           
-          # نمایش لاگ‌های هر دو به صورت لایو
-          # با استفاده از tail روی فایل‌های لاگ (اگر لاگ فایل داشته باشند)
-          # یا با wait برای نمایش خروجی مستقیم
-          
-          # روش 1: اگر ربات و پلتفرم به فایل لاگ می‌نویسند
-          # tail -f reza_bot_v50_7_data/*.log &
-          # tail -f reza_execution_platform_v1_data/*.log &
-          
-          # روش 2: نمایش خروجی مستقیم با wait
+          # ✅ نمایش لاگ‌های لحظه‌ای
           wait $BOT_PID &
           wait $PLATFORM_PID &
           
-          # نگه داشتن اجرا برای نمایش لاگ‌ها
+          # نگه داشتن اجرا
           wait
           
         env:
+          # ✅ غیرفعال کردن بافر برای خروجی لحظه‌ای
+          PYTHONUNBUFFERED: 1
+          
           # 🔑 تنظیمات ربات
           XT_API_KEY: ${{ secrets.XT_API_KEY }}
           XT_API_SECRET: ${{ secrets.XT_API_SECRET }}
@@ -127,27 +99,22 @@ jobs:
           REZA_WEBHOOK_URL: ${{ secrets.REZA_WEBHOOK_URL }}
           REZA_WEBHOOK_SECRET: ${{ secrets.REZA_WEBHOOK_SECRET }}
           REZA_WEBHOOK_TIMEOUT: ${{ secrets.REZA_WEBHOOK_TIMEOUT }}
-          
-          # 📊 تنظیمات عمومی
-          PYTHONUNBUFFERED: 1  # ✅ نمایش لحظه‌ای خروجی
 
       # ============================================================
-      # 6. ذخیره لاگ‌ها به عنوان Artifact
+      # 6. ذخیره لاگ‌ها
       # ============================================================
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: all-logs-${{ github.run_id }}
+          name: logs-${{ github.run_id }}
           path: |
             reza_bot_v50_7_data/
             reza_execution_platform_v1_data/
-            *.log
           retention-days: 7
-          compression-level: 6
 
       # ============================================================
-      # 7. ارسال نوتیفیکیشن در صورت خطا
+      # 7. نوتیفیکیشن خطا
       # ============================================================
       - name: Send notification on failure
         if: failure()
