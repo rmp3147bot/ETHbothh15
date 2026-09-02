@@ -1,32 +1,60 @@
-
 # ============================================================================
-# REZA BOT V50.7 — PROJECT 3 — BOT_A (HH:00)
+# REZA BOT V50.7 — WORKFLOW (قابل استفاده برای همه ربات‌ها)
 # ============================================================================
 #
-# این Workflow هر ساعت در دقیقه 00 اجرا می‌شود
-# و ربات BOT_A را با تنظیمات HH:00 اجرا می‌کند
+# این Workflow برای اجرای هر ربات REZA BOT طراحی شده است
+# کافی است نام فایل ربات را در بخش run تغییر دهید
 #
 # ============================================================================
 
-name: REZA BOT A (HH:00)
+name: REZA BOT WORKFLOW
 
 on:
-  # ✅ اجرا در زمان‌های مشخص (هر ساعت در دقیقه 00)
+  # ✅ اجرا در زمان‌های مشخص (با Cron)
   schedule:
-    - cron: '0 * * * *'
+    - cron: '0 * * * *'      # هر ساعت در دقیقه 00 (برای BOT_A)
+    - cron: '15 * * * *'     # هر ساعت در دقیقه 15 (برای BOT_B)
+    - cron: '30 * * * *'     # هر ساعت در دقیقه 30 (برای ربات‌های دیگر)
+    - cron: '45 * * * *'     # هر ساعت در دقیقه 45 (برای ربات‌های دیگر)
   
   # ✅ اجرای دستی از طریق GitHub Actions UI
   workflow_dispatch:
+    inputs:
+      bot_file:
+        description: 'نام فایل ربات (مثلاً reza_bot_v50_7.py)'
+        required: true
+        default: 'reza_bot_v50_7.py'
+        type: string
+      data_dir:
+        description: 'نام دایرکتوری داده (مثلاً reza_bot_v50_7_data)'
+        required: true
+        default: 'reza_bot_v50_7_data'
+        type: string
 
-  # ✅ اجرا روی push به شاخه main (برای تست)
+  # ✅ اجرا روی push به شاخه main
   push:
     branches: [ main ]
 
 jobs:
-  run-bot-a:
-    name: Run REZA BOT A (HH:00)
+  run-reza-bot:
+    name: Run REZA BOT
     runs-on: ubuntu-latest
     
+    strategy:
+      matrix:
+        # ✅ می‌توانید چندین ربات را همزمان اجرا کنید
+        bot:
+          - file: 'reza_bot_v50_7.py'
+            data_dir: 'reza_bot_v50_7_data'
+            description: 'BOT_A (HH:00)'
+          - file: 'reza_bot_v50_7_hh15.py'
+            data_dir: 'reza_bot_v50_7_data_hh15'
+            description: 'BOT_B (HH:15)'
+          # برای اضافه کردن ربات جدید، فقط یک خط جدید اضافه کنید:
+          # - file: 'reza_bot_v50_7_hh30.py'
+          #   data_dir: 'reza_bot_v50_7_data_hh30'
+          #   description: 'BOT_C (HH:30)'
+
     steps:
       # ============================================================
       # 1. دریافت کد از مخزن
@@ -43,6 +71,7 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
+          # در صورت وجود فایل requirements.txt، کش فعال می‌شود
           cache: 'pip'
 
       # ============================================================
@@ -51,28 +80,36 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests
+          # اگر فایل requirements.txt وجود دارد، از آن استفاده کن
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            pip install requests
+          fi
 
       # ============================================================
       # 4. ایجاد دایرکتوری داده
       # ============================================================
       - name: Create data directory
         run: |
-          mkdir -p reza_bot_v50_7_data
+          mkdir -p ${{ matrix.bot.data_dir }}
+          echo "📁 Data directory: ${{ matrix.bot.data_dir }}"
 
       # ============================================================
-      # 5. اجرای ربات BOT_A (HH:00)
+      # 5. اجرای ربات
       # ============================================================
-      - name: Run BOT_A (HH:00)
+      - name: Run ${{ matrix.bot.description }}
         run: |
           echo "=========================================="
-          echo "🔥 STARTING REZA BOT A (HH:00)"
+          echo "🔥 STARTING ${{ matrix.bot.description }}"
           echo "=========================================="
           echo "Time: $(date -u)"
+          echo "File: ${{ matrix.bot.file }}"
+          echo "Data: ${{ matrix.bot.data_dir }}"
           echo "=========================================="
-          python reza_bot_v50_7.py
+          python ${{ matrix.bot.file }}
         env:
-          # 🔑 API Keys از Secrets
+          # 🔑 API Keys
           XT_API_KEY: ${{ secrets.XT_API_KEY }}
           XT_API_SECRET: ${{ secrets.XT_API_SECRET }}
           XT_MARGIN_USDT: ${{ secrets.XT_MARGIN_USDT }}
@@ -95,13 +132,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: bot-a-logs-${{ github.run_id }}
+          name: logs-${{ matrix.bot.data_dir }}-${{ github.run_id }}
           path: |
-            reza_bot_v50_7_data/
+            ${{ matrix.bot.data_dir }}/
             *.log
-            *.csv
-            *.json
-            *.jsonl
           retention-days: 7
           compression-level: 6
 
@@ -111,7 +145,7 @@ jobs:
       - name: Send notification on failure
         if: failure()
         run: |
-          echo "❌ BOT_A (HH:00) FAILED!"
+          echo "❌ ${{ matrix.bot.description }} FAILED!"
           echo "Run ID: ${{ github.run_id }}"
           echo "Time: $(date -u)"
-          # می‌توانید وب‌هوک تلگرام یا دیسکورد اضافه کنید
+          echo "Bot File: ${{ matrix.bot.file }}"
