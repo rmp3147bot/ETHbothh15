@@ -13,7 +13,7 @@ jobs:
       XT_API_SECRET: ${{ secrets.XT_API_SECRET }}
       XT_MARGIN_USDT: "10.0"
       XT_LEVERAGE: "5"
-      REZA_PLATFORM_URL: "http://127.0.0.1:8787"
+      REZA_PLATFORM_URL: "http://127.0.0.1:8791"
       REZA_PLATFORM_ENABLED: "1"
       PYTHONUNBUFFERED: "1"
 
@@ -80,23 +80,35 @@ jobs:
           echo $! > runtime_reports/bot.pid
           
           sleep 5
-          for i in $(seq 1 10); do
-            if curl -fsS http://127.0.0.1:65/health > /dev/null 2>&1; then
-              echo "✅ Webhook Server ready (port 65)"
+          for i in $(seq 1 15); do
+            if curl -fsS http://127.0.0.1:8765/health > /dev/null 2>&1; then
+              echo "✅ Webhook Server ready on port 8765 (attempt $i)"
               break
             fi
+            echo "⏳ Waiting for webhook... ($i/15)"
             sleep 1
           done
+          
+          if curl -fsS http://127.0.0.1:8765/health > /dev/null 2>&1; then
+            echo "✅ Bot is running"
+          else
+            echo "❌ Bot failed to start"
+            echo ""
+            echo "===== BOT LOG ====="
+            cat runtime_reports/bot.log
+            echo "===================="
+            exit 1
+          fi
 
       - name: Start Platform
         run: |
-          echo "🚀 Starting Platform..."
+          echo "🚀 Starting Platform on port 8791..."
           nohup python -u reza_execution_platform_v1.py > runtime_reports/platform.log 2>&1 &
           echo $! > runtime_reports/platform.pid
           
           for i in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:8787/health > /dev/null 2>&1; then
-              echo "✅ Platform ready (attempt $i)"
+            if curl -fsS http://127.0.0.1:8791/health > /dev/null 2>&1; then
+              echo "✅ Platform ready on port 8791 (attempt $i)"
               break
             fi
             if [ $((i % 5)) -eq 0 ]; then
@@ -110,7 +122,7 @@ jobs:
           cat runtime_reports/platform.log
           echo "========================"
           
-          curl -fsS http://127.0.0.1:8787/health || {
+          curl -fsS http://127.0.0.1:8791/health || {
             echo "❌ Platform failed to start"
             exit 1
           }
@@ -120,8 +132,8 @@ jobs:
           echo "=============================================="
           echo "🔥 REZA 24H LIVE - ETHUSDT"
           echo "=============================================="
-          echo "   WEBHOOK  : http://127.0.0.1:65"
-          echo "   PLATFORM : http://127.0.0.1:8787"
+          echo "   WEBHOOK  : http://127.0.0.1:8765"
+          echo "   PLATFORM : http://127.0.0.1:8791"
           echo "=============================================="
           
           tail -n 0 -F runtime_reports/bot.log | while read line; do echo "[BOT] $line"; done &
