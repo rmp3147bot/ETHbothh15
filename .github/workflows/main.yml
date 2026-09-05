@@ -11,8 +11,8 @@ jobs:
     env:
       XT_API_KEY: ${{ secrets.XT_API_KEY }}
       XT_API_SECRET: ${{ secrets.XT_API_SECRET }}
-      XT_MARGIN_USDT: "4.0"
-      XT_LEVERAGE: "20"
+      XT_MARGIN_USDT: "10.0"
+      XT_LEVERAGE: "5"
       REZA_PLATFORM_URL: "http://127.0.0.1:8787"
       REZA_PLATFORM_ENABLED: "1"
       PYTHONUNBUFFERED: "1"
@@ -32,18 +32,15 @@ jobs:
         run: |
           cp reza_bot_v50_7.txt reza_bot_v50_7.py
           cp reza_execution_platform_v1.txt reza_execution_platform_v1.py
-          mkdir -p runtime_reports reza_bot_v50_7_data reza_execution_platform_v1_data
+          mkdir -p runtime_reports reza_bot_v50_7_data_eth reza_execution_platform_v1_data_eth
 
-      # ================================================================
-      # ✅ کانفیگ پلتفرم (اصلاح شده)
-      # ================================================================
       - name: Create platform config
         run: |
           python -c "
           import json, os
           from pathlib import Path
           
-          Path('reza_execution_platform_v1_data').mkdir(exist_ok=True)
+          Path('reza_execution_platform_v1_data_eth').mkdir(exist_ok=True)
           
           api_key = os.environ.get('XT_API_KEY', '')
           api_secret = os.environ.get('XT_API_SECRET', '')
@@ -52,13 +49,13 @@ jobs:
               print('❌ API credentials not found!')
               exit(1)
           
-          margin = float(os.environ.get('XT_MARGIN_USDT', '4.0'))
-          leverage = int(os.environ.get('XT_LEVERAGE', '20'))
+          margin = float(os.environ.get('XT_MARGIN_USDT', '10.0'))
+          leverage = int(os.environ.get('XT_LEVERAGE', '5'))
           
           config = {
               'exchange': 'XT',
               'market': 'USDT-M FUTURES',
-              'symbol': 'btc_usdt',
+              'symbol': 'eth_usdt',
               'api_key': api_key,
               'api_secret': api_secret,
               'margin_usdt': margin,
@@ -66,18 +63,16 @@ jobs:
               'configured': True
           }
           
-          with open('reza_execution_platform_v1_data/platform_config.json', 'w') as f:
+          with open('reza_execution_platform_v1_data_eth/platform_config.json', 'w') as f:
               json.dump(config, f, indent=2)
           
           print('✅ Platform config created')
           print(f'   API KEY: {api_key[:8]}...')
+          print(f'   Symbol: eth_usdt')
           print(f'   Margin: {margin} USDT')
           print(f'   Leverage: {leverage}x')
           "
 
-      # ================================================================
-      # ✅ مرحله 1: ربات
-      # ================================================================
       - name: Start Bot
         run: |
           echo "🚀 Starting Bot..."
@@ -86,16 +81,13 @@ jobs:
           
           sleep 5
           for i in $(seq 1 10); do
-            if curl -fsS http://127.0.0.1:8765/health > /dev/null 2>&1; then
-              echo "✅ Webhook Server ready"
+            if curl -fsS http://127.0.0.1:65/health > /dev/null 2>&1; then
+              echo "✅ Webhook Server ready (port 65)"
               break
             fi
             sleep 1
           done
 
-      # ================================================================
-      # ✅ مرحله 2: پلتفرم
-      # ================================================================
       - name: Start Platform
         run: |
           echo "🚀 Starting Platform..."
@@ -123,13 +115,13 @@ jobs:
             exit 1
           }
 
-      # ================================================================
-      # ✅ مرحله 3: لاگ لایو
-      # ================================================================
       - name: Live Logs
         run: |
           echo "=============================================="
-          echo "🔥 REZA 24H LIVE"
+          echo "🔥 REZA 24H LIVE - ETHUSDT"
+          echo "=============================================="
+          echo "   WEBHOOK  : http://127.0.0.1:65"
+          echo "   PLATFORM : http://127.0.0.1:8787"
           echo "=============================================="
           
           tail -n 0 -F runtime_reports/bot.log | while read line; do echo "[BOT] $line"; done &
@@ -144,6 +136,6 @@ jobs:
           name: logs
           path: |
             runtime_reports/
-            reza_bot_v50_7_data/
-            reza_execution_platform_v1_data/
+            reza_bot_v50_7_data_eth/
+            reza_execution_platform_v1_data_eth/
           retention-days: 30
