@@ -13,7 +13,7 @@ jobs:
       XT_API_SECRET: ${{ secrets.XT_API_SECRET }}
       XT_MARGIN_USDT: "4.0"
       XT_LEVERAGE: "20"
-      REZA_PLATFORM_URL: "http://127.0.0.1:8788"
+      REZA_PLATFORM_URL: "http://127.0.0.1:8787"
       REZA_PLATFORM_ENABLED: "1"
       PYTHONUNBUFFERED: "1"
 
@@ -53,7 +53,7 @@ jobs:
               exit(1)
           
           margin = float(os.environ.get('XT_MARGIN_USDT', '4.0'))
-          leverage = int(os.environ.get('XT_LEVERAGE', '8'))
+          leverage = int(os.environ.get('XT_LEVERAGE', '20'))
           
           config = {
               'exchange': 'XT',
@@ -103,7 +103,7 @@ jobs:
           echo $! > runtime_reports/platform.pid
           
           for i in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:8788/health > /dev/null 2>&1; then
+            if curl -fsS http://127.0.0.1:8787/health > /dev/null 2>&1; then
               echo "✅ Platform ready (attempt $i)"
               break
             fi
@@ -118,7 +118,7 @@ jobs:
           cat runtime_reports/platform.log
           echo "========================"
           
-          curl -fsS http://127.0.0.1:8788/health || {
+          curl -fsS http://127.0.0.1:8787/health || {
             echo "❌ Platform failed to start"
             exit 1
           }
