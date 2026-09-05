@@ -187,8 +187,8 @@ DEFAULT_CONFIG = {
     "symbol": XT_SYMBOL,
     "api_key": "",
     "api_secret": "",
-    "margin_usdt": 10.0,  # ✅ افزایش برای اتریوم
-    "leverage": 5,        # ✅ کاهش برای اتریوم
+    "margin_usdt": 4.0,  # ✅ افزایش برای اتریوم
+    "leverage": 20,        # ✅ کاهش برای اتریوم
     "configured": False
 }
 
