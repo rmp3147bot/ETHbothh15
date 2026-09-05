@@ -12,8 +12,8 @@ jobs:
       XT_API_KEY: ${{ secrets.XT_API_KEY }}
       XT_API_SECRET: ${{ secrets.XT_API_SECRET }}
       XT_MARGIN_USDT: "4.0"
-      XT_LEVERAGE: "8"
-      REZA_PLATFORM_URL: "http://127.0.0.1:8787"
+      XT_LEVERAGE: "20"
+      REZA_PLATFORM_URL: "http://127.0.0.1:8788"
       REZA_PLATFORM_ENABLED: "1"
       PYTHONUNBUFFERED: "1"
 
@@ -35,7 +35,7 @@ jobs:
           mkdir -p runtime_reports reza_bot_v50_7_data reza_execution_platform_v1_data
 
       # ================================================================
-      # ✅ کانفیگ پلتفرم
+      # ✅ کانفیگ پلتفرم (اصلاح شده)
       # ================================================================
       - name: Create platform config
         run: |
@@ -76,16 +76,7 @@ jobs:
           "
 
       # ================================================================
-      # ✅ تغییر پورت پلتفرم به 8787
-      # ================================================================
-      - name: Change platform port to 8787
-        run: |
-          sed -i 's/PLATFORM_PORT = 8788/PLATFORM_PORT = 8787/g' reza_execution_platform_v1.py
-          sed -i 's/PLATFORM_PORT = 8789/PLATFORM_PORT = 8787/g' reza_execution_platform_v1.py
-          echo "✅ Platform port changed to 8787"
-
-      # ================================================================
-      # ✅ مرحله 1: ربات (Webhook Server در 8765)
+      # ✅ مرحله 1: ربات
       # ================================================================
       - name: Start Bot
         run: |
@@ -103,21 +94,21 @@ jobs:
           done
 
       # ================================================================
-      # ✅ مرحله 2: پلتفرم روی پورت 8787
+      # ✅ مرحله 2: پلتفرم
       # ================================================================
       - name: Start Platform
         run: |
-          echo "🚀 Starting Platform on port 8787..."
+          echo "🚀 Starting Platform..."
           nohup python -u reza_execution_platform_v1.py > runtime_reports/platform.log 2>&1 &
           echo $! > runtime_reports/platform.pid
           
           for i in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:8787/health > /dev/null 2>&1; then
+            if curl -fsS http://127.0.0.1:8788/health > /dev/null 2>&1; then
               echo "✅ Platform ready (attempt $i)"
               break
             fi
             if [ $((i % 5)) -eq 0 ]; then
-              echo "⏳ Waiting for platform on 8787... ($i/60)"
+              echo "⏳ Waiting for platform... ($i/60)"
             fi
             sleep 1
           done
@@ -127,8 +118,8 @@ jobs:
           cat runtime_reports/platform.log
           echo "========================"
           
-          curl -fsS http://127.0.0.1:8787/health || {
-            echo "❌ Platform failed to start on port 8787"
+          curl -fsS http://127.0.0.1:8788/health || {
+            echo "❌ Platform failed to start"
             exit 1
           }
 
@@ -139,9 +130,6 @@ jobs:
         run: |
           echo "=============================================="
           echo "🔥 REZA 24H LIVE"
-          echo "=============================================="
-          echo "BOT      : http://127.0.0.1:8765 (Webhook)"
-          echo "PLATFORM : http://127.0.0.1:8787"
           echo "=============================================="
           
           tail -n 0 -F runtime_reports/bot.log | while read line; do echo "[BOT] $line"; done &
