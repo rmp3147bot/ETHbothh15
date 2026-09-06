@@ -1,0 +1,2209 @@
+# ============================================================================
+# REZA BOT V50.7 — PROJECT 4 — WAVE RIDING OPTIMIZED — ETH ✅
+# ============================================================================
+#
+# MARKET:
+# ETHUSDT FUTURES
+#
+# PURPOSE:
+# XT LIVE MARKET DATA + BOT-BUILT 5M CANDLES
+# + WAVE RIDING STRATEGY (موج‌سواری بهینه)
+# + TREND DETECTION + REVERSAL DETECTION
+# + NO HYPER / NO SESSION LOCK
+# + TP = 1R, FIXED RISK = 0.25 USDT
+#
+# STRATEGY:
+# - بررسی هر کندل بسته شده (بدون منتظر ماندن)
+# - تشخیص شروع روند با بدنه + RSI + حجم
+# - تشخیص حرکت‌های انفجاری با شکست قوی
+# - تشخیص برگشت با الگوهای کندلی
+# - CoolDown 2 کندل بین سیگنال‌ها
+# - حداکثر ۲ سیگنال هم‌جهت پشت سر هم
+#
+# OPTIMIZED PARAMETERS:
+# - TREND_MIN_BODY_PERCENT = 35%
+# - TREND_RSI_RANGE = 30-88 (LONG), 12-68 (SHORT)
+# - STRONG_BREAKOUT_BODY = 65% + VOLUME 1.2x
+# - SHADOW_MULTIPLIER = 1.2 (برای برگشت سریع‌تر)
+# - COOLDOWN = 2 candles
+# - RANGE_THRESHOLD = 0.4 (حساس‌تر)
+#
+# ============================================================================
+
+import os
+import csv
+import json
+import time
+import logging
+import math
+import threading
+
+from datetime import datetime, timezone, timedelta
+from http.server import BaseHTTPRequestHandler
+from socketserver import ThreadingTCPServer
+
+import requests
+
+
+# ============================================================================
+# VERSION
+# ============================================================================
+
+VERSION = "V50.7-WAVE-OPTIMIZED"
+PROJECT = "PROJECT_4"
+BOT_ID = "BOT_B"
+
+
+# ============================================================================
+# XT LIVE MARKET — ETH CONFIG ✅
+# ============================================================================
+
+XT_BASE_URL = os.getenv(
+    "XT_BASE_URL",
+    "https://fapi.xt.com"
+).rstrip("/")
+
+SYMBOL = "eth_usdt"
+DISPLAY_SYMBOL = "ETHUSDT"
+
+INSTRUMENT_TYPE = "FUTURES"
+BAR = "5m"
+
+MAX_PRIMARY_CANDLES = 500
+POLL_SECONDS = 1.0
+
+REQUEST_TIMEOUT = 10
+MAX_RETRIES = 4
+
+
+# ============================================================================
+# WAVE RIDING OPTIMIZED PARAMETERS ✅
+# ============================================================================
+
+# ============================================================================
+# TREND DETECTION
+# ============================================================================
+
+TREND_MIN_BODY_PERCENT = 35.0       # حداقل بدنه برای تشخیص روند
+TREND_MIN_RSI = 30                  # حداقل RSI برای روند صعودی
+TREND_MAX_RSI = 88                  # حداکثر RSI برای روند صعودی
+TREND_SHORT_MIN_RSI = 12            # حداقل RSI برای روند نزولی
+TREND_SHORT_MAX_RSI = 68            # حداکثر RSI برای روند نزولی
+TREND_MIN_VOLUME_RATIO = 0.6        # حداقل حجم برای تأیید روند
+
+# ============================================================================
+# STRONG BREAKOUT
+# ============================================================================
+
+STRONG_BREAKOUT_BODY_PERCENT = 65.0 # بدنه ≥ ۶۵% برای شکست قوی
+STRONG_BREAKOUT_VOLUME_RATIO = 1.2  # حجم ≥ ۱.۲×میانگین برای تأیید
+
+# ============================================================================
+# REVERSAL DETECTION
+# ============================================================================
+
+SHADOW_MULTIPLIER = 1.2             # نسبت سایه به بدنه (منعطف‌تر)
+STRONG_PATTERN_MULTIPLIER = 2.0     # الگوی قوی (منعطف‌تر)
+REVERSAL_MIN_BODY_PERCENT = 20.0    # حداقل بدنه برای برگشت
+RSI_OVERSOLD = 45                   # اشباع فروش (تشخیص زودتر)
+RSI_OVERBOUGHT = 55                 # اشباع خرید (تشخیص زودتر)
+VOLUME_SPIKE_THRESHOLD = 0.8        # حجم برای برگشت (منعطف‌تر)
+
+# ============================================================================
+# SIGNAL MANAGEMENT
+# ============================================================================
+
+SIGNAL_COOLDOWN_CANDLES = 2         # فاصله بین سیگنال‌ها (کاهش یافته)
+MAX_CONSECUTIVE_SAME_DIRECTION = 2  # حداکثر سیگنال هم‌جهت
+MIN_PRICE_DIFF_PERCENT = 0.25       # حداقل فاصله قیمتی (کاهش یافته)
+
+# ============================================================================
+# RANGE FILTER
+# ============================================================================
+
+USE_RANGE_FILTER = True
+RANGE_THRESHOLD = 0.4               # کاهش از ۰.۵ به ۰.۴ (حساس‌تر به روند)
+LOOKBACK_RANGE = 8                  # کاهش از ۱۰ به ۸ (واکنش سریع‌تر)
+ATR_PERIOD = 5
+
+# ============================================================================
+# DYNAMIC R
+# ============================================================================
+
+USE_DYNAMIC_R = True
+DYNAMIC_R_LOOKBACK = 4              # کاهش از ۵ به ۴ (واکنش سریع‌تر)
+MIN_R_VALUE = 1.2                   # کاهش از ۱.۵ به ۱.۲ (ورود با R کوچک‌تر)
+
+
+# ============================================================================
+# REZA EXECUTION PLATFORM CONNECTION — PORT 8791 ✅
+# ============================================================================
+
+PLATFORM_BASE_URL = os.getenv(
+    "REZA_PLATFORM_URL",
+    "http://127.0.0.1:8791"
+).rstrip("/")
+
+PLATFORM_HEALTH_PATH = "/health"
+PLATFORM_SIGNAL_PATH = "/signal"
+
+PLATFORM_TIMEOUT = 10.0
+PLATFORM_RETRY_SECONDS = 2.0
+PLATFORM_HEALTH_INTERVAL = 5.0
+
+PLATFORM_ENABLED = (
+    os.getenv("REZA_PLATFORM_ENABLED", "1").strip().lower()
+    not in ("0", "false", "no", "off")
+)
+
+
+# ============================================================================
+# WEBHOOK SERVER — PORT 8765 ✅
+# ============================================================================
+
+WEBHOOK_HOST = "127.0.0.1"
+WEBHOOK_PORT = 8765
+WEBHOOK_PATH = "/webhook"
+
+
+# ============================================================================
+# DATA DIRECTORY
+# ============================================================================
+
+DATA_DIR = "reza_bot_v50_7_data_wave_optimized"
+
+PRICE_FILE = os.path.join(DATA_DIR, "live_prices.csv")
+CANDLE_FILE = os.path.join(DATA_DIR, "closed_5m_candles.csv")
+SIGNAL_FILE = os.path.join(DATA_DIR, "signals.csv")
+SIGNAL_JSONL_FILE = os.path.join(DATA_DIR, "signals.jsonl")
+SIGNAL_STATE_FILE = os.path.join(DATA_DIR, "signal_state.json")
+PLATFORM_QUEUE_FILE = os.path.join(DATA_DIR, "pending_platform_signals.jsonl")
+WEBHOOK_LOG_FILE = os.path.join(DATA_DIR, "webhook_received.jsonl")
+WAVE_STATE_FILE = os.path.join(DATA_DIR, "wave_state.json")
+
+
+# ============================================================================
+# LOGGING
+# ============================================================================
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s"
+)
+
+log = logging.getLogger(f"REZA-BOT-{BOT_ID}-WAVE-OPT")
+
+
+# ============================================================================
+# HTTP SESSIONS
+# ============================================================================
+
+http = requests.Session()
+http.headers.update({
+    "User-Agent": f"REZA-BOT-{BOT_ID}-WAVE-OPT",
+    "Accept": "application/json"
+})
+
+platform_http = requests.Session()
+platform_http.headers.update({
+    "User-Agent": f"REZA-BOT-{BOT_ID}-WAVE-OPT",
+    "Accept": "application/json",
+    "Content-Type": "application/json"
+})
+
+
+# ============================================================================
+# GLOBAL STATE
+# ============================================================================
+
+primary_candles = []
+current_candle = None
+last_bucket = None
+last_price = None
+
+running = True
+
+
+# ============================================================================
+# WAVE STATE — بدون هایپر و سشن ✅
+# ============================================================================
+
+wave_state = {
+    "last_signal_time": None,
+    "last_signal_candle": None,
+    "last_signal_direction": None,
+    "consecutive_same_direction": 0,
+    "cooldown_candles_remaining": 0,
+    "last_signal_price": None,
+    "signal_count": 0
+}
+
+
+# ============================================================================
+# PLATFORM STATE
+# ============================================================================
+
+platform_state = {
+    "enabled": PLATFORM_ENABLED,
+    "online": False,
+    "last_check": None,
+    "last_success": None,
+    "last_error": None,
+    "last_ack_signal": None,
+    "pending_count": 0
+}
+
+platform_lock = threading.Lock()
+platform_delivery_lock = threading.Lock()
+
+
+# ============================================================================
+# TIME UTILITIES
+# ============================================================================
+
+def utc_now():
+    return datetime.now(timezone.utc)
+
+
+def parse_xt_timestamp(value):
+    if value is None:
+        return None
+
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if not math.isfinite(numeric_value):
+        return None
+
+    if numeric_value > 100000000000:
+        numeric_value /= 1000.0
+
+    try:
+        return datetime.fromtimestamp(numeric_value, timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def parse_utc_datetime(value):
+    if value is None:
+        return None
+
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    if isinstance(value, (int, float)):
+        return parse_xt_timestamp(value)
+
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+
+        try:
+            numeric_value = float(text)
+            return parse_xt_timestamp(numeric_value)
+        except (TypeError, ValueError):
+            pass
+
+        if text.endswith(" UTC"):
+            text = text[:-4]
+
+        try:
+            parsed = datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+            return parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+
+        try:
+            parsed = datetime.fromisoformat(text)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except ValueError:
+            pass
+
+    return None
+
+
+def format_utc(dt):
+    if dt is None:
+        return ""
+    parsed = parse_utc_datetime(dt)
+    if parsed is None:
+        return ""
+    return parsed.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def restore_signal_datetime_fields(signal):
+    if not isinstance(signal, dict):
+        return signal
+
+    for field in ("time", "source_candle"):
+        if field not in signal:
+            continue
+        value = signal.get(field)
+        parsed = parse_utc_datetime(value)
+        if parsed is not None:
+            signal[field] = parsed
+
+    return signal
+
+
+# ============================================================================
+# WAVE STATE PERSISTENCE
+# ============================================================================
+
+def save_wave_state():
+    data = {
+        "last_signal_time": format_utc(wave_state.get("last_signal_time")),
+        "last_signal_candle": format_utc(wave_state.get("last_signal_candle")),
+        "last_signal_direction": wave_state.get("last_signal_direction"),
+        "consecutive_same_direction": wave_state.get("consecutive_same_direction", 0),
+        "cooldown_candles_remaining": wave_state.get("cooldown_candles_remaining", 0),
+        "last_signal_price": wave_state.get("last_signal_price"),
+        "signal_count": wave_state.get("signal_count", 0),
+        "updated_at": format_utc(utc_now())
+    }
+    atomic_write_json(WAVE_STATE_FILE, data)
+
+
+def load_wave_state():
+    global wave_state
+    data = read_json_file(WAVE_STATE_FILE, {})
+    if isinstance(data, dict):
+        for key in wave_state.keys():
+            if key in data:
+                wave_state[key] = data[key]
+        log.info("🔄 WAVE STATE RESTORED: signal_count=%s, direction=%s",
+                 wave_state.get("signal_count"), wave_state.get("last_signal_direction"))
+
+
+# ============================================================================
+# FILE HELPERS
+# ============================================================================
+
+def ensure_data_dir():
+    os.makedirs(DATA_DIR, exist_ok=True)
+
+
+def ensure_files():
+    ensure_data_dir()
+
+    specs = [
+        (PRICE_FILE, ["time", "symbol", "last", "mark", "index", "funding"]),
+        (CANDLE_FILE, ["start_time", "end_time", "open", "high", "low", "close", "samples", "source", "confirmed"]),
+        (SIGNAL_FILE, ["signal_id", "time", "source_candle", "symbol", "market",
+                       "direction", "reference_entry", "entry_type", "execution", "status", "platform_status"]),
+    ]
+
+    for path, header in specs:
+        if not os.path.exists(path):
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                csv.writer(f).writerow(header)
+
+    if not os.path.exists(PLATFORM_QUEUE_FILE):
+        open(PLATFORM_QUEUE_FILE, "a", encoding="utf-8").close()
+
+
+def atomic_write_json(path, data):
+    ensure_data_dir()
+    temp = path + ".tmp"
+
+    try:
+        with open(temp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except Exception:
+                pass
+        os.replace(temp, path)
+
+    except Exception as exc:
+        log.error("Could not write JSON state %s: %s", path, exc)
+        try:
+            if os.path.exists(temp):
+                os.remove(temp)
+        except Exception:
+            pass
+
+
+def read_json_file(path, default):
+    if not os.path.exists(path):
+        return default
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data
+
+    except Exception as exc:
+        log.warning("Could not read JSON state %s: %s", path, exc)
+        return default
+
+
+# ============================================================================
+# SIGNAL STATE
+# ============================================================================
+
+def load_signal_states():
+    data = read_json_file(SIGNAL_STATE_FILE, {})
+    if not isinstance(data, dict):
+        return {}
+    return data
+
+
+def save_signal_state(signal, status=None, platform_status=None):
+    states = load_signal_states()
+    signal = restore_signal_datetime_fields(signal)
+    signal_id = str(signal.get("signal_id"))
+
+    if status is not None:
+        signal["status"] = status
+    if platform_status is not None:
+        signal["platform_status"] = platform_status
+
+    states[signal_id] = {
+        "signal_id": signal_id,
+        "status": signal.get("status"),
+        "platform_status": signal.get("platform_status"),
+        "updated_at": format_utc(utc_now()),
+        "direction": signal.get("direction"),
+        "source_candle": format_utc(signal.get("source_candle"))
+    }
+
+    atomic_write_json(SIGNAL_STATE_FILE, states)
+
+
+def append_signal_event(signal, event, status=None, platform_status=None, response=None):
+    event_record = {
+        "event": event,
+        "event_time": format_utc(utc_now()),
+        "signal_id": signal.get("signal_id"),
+        "status": status if status is not None else signal.get("status"),
+        "platform_status": platform_status if platform_status is not None else signal.get("platform_status"),
+        "signal": signal
+    }
+
+    if response is not None:
+        event_record["platform_response"] = response
+
+    with open(SIGNAL_JSONL_FILE, "a", encoding="utf-8") as f:
+        f.write(json.dumps(event_record, ensure_ascii=False, default=str) + "\n")
+
+
+def update_signal_status(signal, status, platform_status, event, response=None):
+    signal["status"] = status
+    signal["platform_status"] = platform_status
+
+    save_signal_state(signal, status=status, platform_status=platform_status)
+    append_signal_event(signal, event, status=status, platform_status=platform_status, response=response)
+
+
+# ============================================================================
+# FILE OUTPUT
+# ============================================================================
+
+def save_price(dt, last, mark=None, index=None, funding=None):
+    with open(PRICE_FILE, "a", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerow([
+            format_utc(dt),
+            DISPLAY_SYMBOL,
+            "" if last is None else f"{last:.8f}",
+            "" if mark is None else f"{mark:.8f}",
+            "" if index is None else f"{index:.8f}",
+            "" if funding is None else f"{funding:.12f}"
+        ])
+
+
+def save_closed_candle(c):
+    start_time = c.get("start_time", c.get("time"))
+    end_time = c.get("end_time")
+
+    with open(CANDLE_FILE, "a", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerow([
+            format_utc(start_time),
+            format_utc(end_time) if end_time else "",
+            f"{c['open']:.8f}",
+            f"{c['high']:.8f}",
+            f"{c['low']:.8f}",
+            f"{c['close']:.8f}",
+            c.get("samples", 0),
+            c.get("source", "XT_LIVE"),
+            c.get("confirmed", 1)
+        ])
+
+
+def save_signal(signal, platform_status="WAITING_FOR_PLATFORM"):
+    signal = restore_signal_datetime_fields(signal)
+    signal["platform_status"] = platform_status
+    signal["status"] = "WAITING_FOR_PLATFORM"
+
+    signal_id = signal["signal_id"]
+
+    with open(SIGNAL_FILE, "a", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerow([
+            signal_id,
+            format_utc(signal["time"]),
+            format_utc(signal["source_candle"]),
+            signal["symbol"],
+            signal.get("market", "XT_FUTURES"),
+            signal["direction"],
+            f"{signal['reference_entry']:.8f}",
+            signal.get("entry_type", "TREND"),
+            "SEPARATE_PLATFORM",
+            "WAITING_FOR_PLATFORM",
+            platform_status
+        ])
+
+    save_signal_state(signal, status="WAITING_FOR_PLATFORM", platform_status=platform_status)
+    append_signal_event(signal, "SIGNAL_CREATED", status="WAITING_FOR_PLATFORM", platform_status=platform_status)
+
+
+# ============================================================================
+# PLATFORM QUEUE
+# ============================================================================
+
+def read_platform_queue():
+    signals = []
+
+    try:
+        with open(PLATFORM_QUEUE_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+
+                try:
+                    signal = json.loads(line)
+                    if not isinstance(signal, dict):
+                        continue
+
+                    signal = restore_signal_datetime_fields(signal)
+                    signal_id = signal.get("signal_id")
+
+                    if signal_id:
+                        signals.append(signal)
+
+                except Exception:
+                    log.warning("Invalid platform queue line ignored.")
+
+    except Exception as exc:
+        log.error("Could not read platform queue: %s", exc)
+
+    unique = []
+    seen = set()
+
+    for signal in signals:
+        signal_id = str(signal.get("signal_id"))
+        if signal_id in seen:
+            continue
+        seen.add(signal_id)
+        unique.append(signal)
+
+    return unique
+
+
+def write_platform_queue(signals):
+    temp = PLATFORM_QUEUE_FILE + ".tmp"
+
+    try:
+        with open(temp, "w", encoding="utf-8") as f:
+            for signal in signals:
+                f.write(json.dumps(signal, ensure_ascii=False, default=str) + "\n")
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except Exception:
+                pass
+        os.replace(temp, PLATFORM_QUEUE_FILE)
+
+    except Exception as exc:
+        log.error("Could not write platform queue: %s", exc)
+        try:
+            if os.path.exists(temp):
+                os.remove(temp)
+        except Exception:
+            pass
+
+
+def refresh_pending_count():
+    signals = read_platform_queue()
+
+    with platform_lock:
+        platform_state["pending_count"] = len(signals)
+
+    return len(signals)
+
+
+def queue_platform_signal(signal):
+    signals = read_platform_queue()
+
+    signal = restore_signal_datetime_fields(signal)
+    signal_id = str(signal.get("signal_id"))
+
+    existing_ids = {str(x.get("signal_id")) for x in signals}
+
+    if signal_id not in existing_ids:
+        signals.append(signal)
+
+    write_platform_queue(signals)
+
+    with platform_lock:
+        platform_state["pending_count"] = len(signals)
+
+
+def remove_platform_signal(signal_id):
+    signals = read_platform_queue()
+
+    remaining = [
+        x for x in signals
+        if str(x.get("signal_id")) != str(signal_id)
+    ]
+
+    write_platform_queue(remaining)
+
+    with platform_lock:
+        platform_state["pending_count"] = len(remaining)
+
+
+# ============================================================================
+# PLATFORM HEALTH
+# ============================================================================
+
+def platform_health_check():
+    if not PLATFORM_ENABLED:
+        with platform_lock:
+            platform_state["online"] = False
+            platform_state["last_error"] = "DISABLED"
+
+        refresh_pending_count()
+        return False
+
+    try:
+        response = platform_http.get(
+            PLATFORM_BASE_URL + PLATFORM_HEALTH_PATH,
+            timeout=PLATFORM_TIMEOUT
+        )
+
+        if response.status_code != 200:
+            raise RuntimeError(f"HTTP {response.status_code}: {response.text[:500]}")
+
+        try:
+            data = response.json()
+        except Exception:
+            data = {}
+
+        status = str(data.get("status", "ok")).lower()
+
+        if status not in ("ok", "ready", "online", "healthy"):
+            raise RuntimeError(f"Platform unhealthy: {status}")
+
+        with platform_lock:
+            platform_state["online"] = True
+            platform_state["last_check"] = utc_now()
+            platform_state["last_success"] = utc_now()
+            platform_state["last_error"] = None
+
+        refresh_pending_count()
+        return True
+
+    except Exception as exc:
+        with platform_lock:
+            platform_state["online"] = False
+            platform_state["last_check"] = utc_now()
+            platform_state["last_error"] = str(exc)
+
+        refresh_pending_count()
+        return False
+
+
+# ============================================================================
+# PLATFORM SIGNAL PAYLOAD
+# ============================================================================
+
+def build_platform_payload(signal):
+    return {
+        "type": "SIGNAL",
+        "protocol": "REZA_EXECUTION_PLATFORM_V1",
+        "bot_version": VERSION,
+        "project": PROJECT,
+        "bot_id": BOT_ID,
+
+        "signal_id": signal["signal_id"],
+
+        "created_at": format_utc(signal["time"]),
+        "time": format_utc(signal["time"]),
+        "source_candle": format_utc(signal["source_candle"]),
+
+        "symbol": signal["symbol"],
+        "market": signal.get("market", "XT_FUTURES"),
+        "reference_market": signal.get("reference_market", "XT_FUTURES"),
+
+        "r": signal["r"],
+        "initial_risk": signal["initial_risk"],
+        "initial_stop": signal.get("initial_stop", None),
+        "initial_tp": signal.get("initial_tp", None),
+
+        "direction": signal["direction"],
+        "reference_entry": signal["reference_entry"],
+        "entry_type": signal.get("entry_type", "TREND"),
+
+        "source": "REZA_BOT",
+        "execution": "REZA_EXECUTION_PLATFORM"
+    }
+
+
+def validate_platform_ack(data, sent_signal_id):
+    if not isinstance(data, dict):
+        return False
+
+    returned_signal_id = data.get("signal_id")
+    if returned_signal_id is None:
+        return False
+
+    if str(returned_signal_id) != str(sent_signal_id):
+        log.error("INVALID PLATFORM ACK: signal_id mismatch.")
+        return False
+
+    ack = bool(data.get("ack", False))
+    status = str(data.get("status", "")).lower()
+    already_received = bool(data.get("already_received", False))
+    already_accepted = bool(data.get("already_accepted", False))
+
+    if ack or already_received or already_accepted:
+        return True
+
+    if status in ("already_received", "already_accepted"):
+        return True
+
+    return False
+
+
+# ============================================================================
+# SEND SIGNAL TO PLATFORM
+# ============================================================================
+
+def send_signal_to_platform(signal):
+    if not PLATFORM_ENABLED:
+        update_signal_status(
+            signal,
+            "WAITING_FOR_PLATFORM",
+            "WAITING_FOR_PLATFORM",
+            "PLATFORM_DISABLED"
+        )
+        return {"success": False, "status": "PLATFORM_DISABLED"}
+
+    signal = restore_signal_datetime_fields(signal)
+    signal_id = str(signal.get("signal_id"))
+    payload = build_platform_payload(signal)
+
+    with platform_delivery_lock:
+        try:
+            response = platform_http.post(
+                PLATFORM_BASE_URL + PLATFORM_SIGNAL_PATH,
+                json=payload,
+                timeout=PLATFORM_TIMEOUT
+            )
+
+            if response.status_code not in (200, 201, 202):
+                raise RuntimeError(f"HTTP {response.status_code}: {response.text[:1000]}")
+
+            try:
+                data = response.json()
+            except Exception:
+                data = {}
+
+            if not validate_platform_ack(data, signal_id):
+                raise RuntimeError(f"Platform response did not contain valid ACK: {data}")
+
+            with platform_lock:
+                platform_state["online"] = True
+                platform_state["last_success"] = utc_now()
+                platform_state["last_error"] = None
+                platform_state["last_ack_signal"] = signal_id
+
+            remove_platform_signal(signal_id)
+
+            update_signal_status(
+                signal,
+                "READY_FOR_EXECUTION",
+                "ACKNOWLEDGED",
+                "PLATFORM_ACK",
+                response=data
+            )
+
+            return {"success": True, "status": data.get("status", "ACKNOWLEDGED"), "response": data}
+
+        except Exception as exc:
+            with platform_lock:
+                platform_state["online"] = False
+                platform_state["last_error"] = str(exc)
+
+            queue_platform_signal(signal)
+
+            update_signal_status(
+                signal,
+                "WAITING_FOR_PLATFORM",
+                "WAITING_FOR_PLATFORM",
+                "DELIVERY_FAILED_PENDING",
+                response={"error": str(exc)}
+            )
+
+            return {"success": False, "status": "WAITING_FOR_PLATFORM", "error": str(exc)}
+
+
+# ============================================================================
+# RETRY PENDING SIGNALS
+# ============================================================================
+
+def retry_pending_platform_signals():
+    if not PLATFORM_ENABLED:
+        return
+
+    signals = read_platform_queue()
+
+    with platform_lock:
+        platform_state["pending_count"] = len(signals)
+
+    if not signals:
+        return
+
+    if not platform_health_check():
+        return
+
+    for signal in list(signals):
+        signal = restore_signal_datetime_fields(signal)
+        signal_id = str(signal.get("signal_id"))
+
+        update_signal_status(
+            signal,
+            "WAITING_FOR_PLATFORM",
+            "RETRYING",
+            "PLATFORM_RETRY"
+        )
+
+        result = send_signal_to_platform(signal)
+
+        if result.get("success"):
+            print()
+            print("PLATFORM QUEUE SIGNAL DELIVERED")
+            print(f"SIGNAL ID : {signal_id}")
+            print("STATUS    : ACKNOWLEDGED")
+            print()
+
+        else:
+            break
+
+        if PLATFORM_RETRY_SECONDS > 0:
+            time.sleep(PLATFORM_RETRY_SECONDS)
+
+    refresh_pending_count()
+
+
+# ============================================================================
+# PLATFORM MONITOR
+# ============================================================================
+
+def platform_monitor_loop():
+    if not PLATFORM_ENABLED:
+        log.warning("Execution Platform connection disabled.")
+        return
+
+    while running:
+        try:
+            online = platform_health_check()
+
+            if online:
+                retry_pending_platform_signals()
+
+        except Exception as exc:
+            log.exception("Platform monitor error: %s", exc)
+
+        time.sleep(PLATFORM_HEALTH_INTERVAL)
+
+
+def start_platform_monitor():
+    if not PLATFORM_ENABLED:
+        return None
+
+    thread = threading.Thread(
+        target=platform_monitor_loop,
+        name=f"REZA-PLATFORM-{BOT_ID}-MONITOR",
+        daemon=True
+    )
+
+    thread.start()
+    return thread
+
+
+# ============================================================================
+# XT INSTRUMENT
+# ============================================================================
+
+instrument_info = {
+    "price_tick": 0.01,
+    "lot_size": 0.001,
+    "min_size": 0.001
+}
+
+
+def floor_to_tick(value, tick):
+    try:
+        val = float(value)
+        tick_val = float(tick)
+        if tick_val <= 0:
+            return val
+        return math.floor(val / tick_val) * tick_val
+    except Exception:
+        return value
+
+
+def normalize_price(price):
+    return floor_to_tick(price, instrument_info["price_tick"])
+
+
+# ============================================================================
+# XT FUTURES PUBLIC API
+# ============================================================================
+
+def xt_get(path, params=None):
+    last_error = None
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            response = http.get(XT_BASE_URL + path, params=params or {}, timeout=REQUEST_TIMEOUT)
+
+            if response.status_code != 200:
+                raise RuntimeError(f"HTTP {response.status_code}: {response.text[:1000]}")
+
+            data = response.json()
+
+            if not isinstance(data, dict):
+                raise RuntimeError("XT returned non-dict response")
+
+            return data
+
+        except Exception as exc:
+            last_error = exc
+
+            if attempt < MAX_RETRIES:
+                time.sleep(min(0.5 * attempt, 3.0))
+
+    raise RuntimeError(f"XT API failed after {MAX_RETRIES} attempts: {last_error}")
+
+
+def load_instrument():
+    global instrument_info
+
+    instrument_info = {
+        "price_tick": 0.01,
+        "lot_size": 0.001,
+        "min_size": 0.001,
+        "state": "LIVE"
+    }
+
+    return instrument_info
+
+
+# ============================================================================
+# XT LIVE TICKER
+# ============================================================================
+
+def get_ticker():
+    url = f"{XT_BASE_URL}/future/market/v1/public/q/agg-ticker"
+    params = {"symbol": SYMBOL}
+
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+
+    except Exception as exc:
+        raise RuntimeError(f"XT ticker request failed for {SYMBOL}: {exc}")
+
+    try:
+        data = response.json()
+
+    except Exception as exc:
+        raise RuntimeError(f"XT returned non-JSON ticker for {SYMBOL}: {response.text[:1000]}") from exc
+
+    if not isinstance(data, dict):
+        raise RuntimeError(f"XT returned invalid ticker for {SYMBOL}: {repr(data)[:1500]}")
+
+    result = data.get("result")
+
+    if isinstance(result, list):
+        if not result:
+            raise RuntimeError(f"XT returned empty ticker for {SYMBOL}: {repr(data)[:1500]}")
+        result = result[0]
+
+    elif not isinstance(result, dict):
+        raise RuntimeError(f"XT returned invalid ticker result for {SYMBOL}: {repr(data)[:1500]}")
+
+    last = result.get("c") if result.get("c") is not None else result.get("last")
+    if last is None:
+        last = result.get("lastPrice") if result.get("lastPrice") is not None else result.get("price")
+
+    if last is None:
+        raise RuntimeError(f"XT ticker has no last price for {SYMBOL}: {repr(data)[:1500]}")
+
+    try:
+        last = float(last)
+
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"XT ticker returned invalid last price for {SYMBOL}: {repr(last)}") from exc
+
+    if not math.isfinite(last) or last <= 0:
+        raise RuntimeError(f"XT ticker returned invalid last price for {SYMBOL}: {repr(last)}")
+
+    ts = result.get("ts") if result.get("ts") is not None else result.get("timestamp")
+    if ts is None:
+        ts = result.get("time") if result.get("time") is not None else result.get("t")
+
+    return {"last": last, "ts": ts, "raw": data}
+
+
+def get_market_snapshot():
+    ticker = get_ticker()
+    raw_ts = ticker.get("ts")
+    parsed_ts = parse_utc_datetime(raw_ts)
+
+    if parsed_ts is None:
+        parsed_ts = utc_now()
+
+    return {
+        "last": ticker["last"],
+        "mark": ticker.get("mark"),
+        "index": ticker.get("index"),
+        "funding": ticker.get("funding"),
+        "ts": parsed_ts
+    }
+
+
+# ============================================================================
+# 5M BUCKET
+# ============================================================================
+
+def bucket_5m(dt):
+    return dt.replace(minute=dt.minute - dt.minute % 5, second=0, microsecond=0)
+
+
+# ============================================================================
+# CURRENT LIVE CANDLE
+# ============================================================================
+
+def start_new_candle(bucket, price):
+    return {
+        "time": bucket,
+        "open": price,
+        "high": price,
+        "low": price,
+        "close": price,
+        "samples": 1,
+        "confirmed": 0,
+        "source": "XT_LIVE"
+    }
+
+
+def update_candle(candle, price):
+    candle["high"] = max(candle["high"], price)
+    candle["low"] = min(candle["low"], price)
+    candle["close"] = price
+    candle["samples"] += 1
+
+
+def close_candle(candle):
+    closed = dict(candle)
+    closed["confirmed"] = 1
+    closed["end_time"] = candle["time"] + timedelta(minutes=5)
+    return closed
+
+
+# ============================================================================
+# ATR CALCULATION
+# ============================================================================
+
+def calculate_atr(candles, period=5):
+    if len(candles) < 2:
+        return None
+    
+    available_period = min(period, len(candles) - 1)
+    
+    if available_period < 1:
+        return None
+    
+    tr_list = []
+    for i in range(1, len(candles)):
+        high = candles[i]['high']
+        low = candles[i]['low']
+        prev_close = candles[i-1]['close']
+        
+        tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+        tr_list.append(tr)
+    
+    if not tr_list:
+        return None
+    
+    atr = sum(tr_list[-available_period:]) / available_period
+    
+    return atr
+
+
+# ============================================================================
+# RANGE DETECTION
+# ============================================================================
+
+def is_range_market(candles, lookback=8):
+    if len(candles) < lookback:
+        return False
+    
+    try:
+        highs = [float(c['high']) for c in candles[-lookback:]]
+        lows = [float(c['low']) for c in candles[-lookback:]]
+    except (ValueError, TypeError, KeyError):
+        return False
+    
+    range_high = max(highs)
+    range_low = min(lows)
+    range_size = range_high - range_low
+    
+    atr = calculate_atr(candles, ATR_PERIOD)
+    if atr is None or atr <= 0:
+        return False
+    
+    if range_size < atr * RANGE_THRESHOLD:
+        return True
+    
+    return False
+
+
+# ============================================================================
+# RSI CALCULATION
+# ============================================================================
+
+def calculate_rsi(candles, period=6):
+    if len(candles) < period + 1:
+        return None
+
+    recent_candles = candles[-(period + 1):]
+    
+    gains = []
+    losses = []
+    
+    for i in range(1, len(recent_candles)):
+        change = recent_candles[i]['close'] - recent_candles[i-1]['close']
+        if change >= 0:
+            gains.append(change)
+            losses.append(0)
+        else:
+            gains.append(0)
+            losses.append(-change)
+    
+    if not gains or not losses:
+        return None
+    
+    avg_gain = sum(gains) / period
+    avg_loss = sum(losses) / period
+    
+    if avg_loss == 0:
+        return 100.0
+    
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
+    
+    return rsi
+
+
+# ============================================================================
+# DYNAMIC R (محاسبه R از برگشت قیمت)
+# ============================================================================
+
+def get_dynamic_r(candles, lookback=4):
+    if len(candles) < lookback:
+        return None
+    
+    try:
+        recent = candles[-lookback:]
+        highs = [float(c['high']) for c in recent]
+        lows = [float(c['low']) for c in recent]
+    except (ValueError, TypeError, KeyError):
+        return None
+    
+    recent_high = max(highs)
+    recent_low = min(lows)
+    dynamic_r = recent_high - recent_low
+    
+    atr = calculate_atr(candles, ATR_PERIOD)
+    if atr is None or atr <= 0:
+        return max(dynamic_r, MIN_R_VALUE)
+    
+    if dynamic_r < atr * 0.3:
+        return max(atr * 0.5, MIN_R_VALUE)
+    elif dynamic_r < atr * 0.5:
+        return max(atr * 0.7, MIN_R_VALUE)
+    
+    return max(dynamic_r, MIN_R_VALUE)
+
+
+# ============================================================================
+# TREND SIGNAL DETECTION (WAVE RIDING OPTIMIZED)
+# ============================================================================
+
+def detect_trend_signals(candle):
+    """
+    تشخیص سیگنال‌های روندی - بهینه‌شده برای موج‌سواری
+    - STRONG BREAKOUT: Body ≥ 65% + Volume ≥ 1.2x (RSI IGNORED)
+    - BREAKOUT: Body ≥ 35% + RSI 30-88 (LONG) / 12-68 (SHORT)
+    """
+    if candle is None:
+        return None
+
+    if candle.get("confirmed", 0) != 1:
+        return None
+
+    if len(primary_candles) < 4:
+        return None
+
+    # ================================================================
+    # ✅ RANGE FILTER
+    # ================================================================
+    if USE_RANGE_FILTER and is_range_market(primary_candles):
+        return None
+
+    # ================================================================
+    # محاسبات اولیه کندل
+    # ================================================================
+    body = abs(candle["close"] - candle["open"])
+    total_range = candle["high"] - candle["low"]
+    
+    if total_range == 0:
+        return None
+    
+    body_percent = (body / total_range) * 100
+    is_bullish = candle["close"] > candle["open"]
+    rsi = calculate_rsi(primary_candles, 6)
+    rsi_available = rsi is not None
+    
+    # ================================================================
+    # تشخیص سقف/کف ۳ کندل اخیر (برای شکست)
+    # ================================================================
+    last_3_high = max([c['high'] for c in primary_candles[-4:-1]])
+    last_3_low = min([c['low'] for c in primary_candles[-4:-1]])
+    
+    # ================================================================
+    # محاسبه حجم
+    # ================================================================
+    volume_ratio = None
+    if len(primary_candles) >= 6:
+        last_5_volumes = [c.get("samples", 0) for c in primary_candles[-6:-1]]
+        avg_volume = sum(last_5_volumes) / len(last_5_volumes) if last_5_volumes else 1
+        current_volume = candle.get("samples", 0)
+        volume_ratio = current_volume / avg_volume if avg_volume > 0 else 0
+    else:
+        volume_ratio = 1.0
+
+    # ================================================================
+    # ۱. STRONG BREAKOUT LONG (بدون RSI - با حجم بالا)
+    # ================================================================
+    if is_bullish and body_percent >= STRONG_BREAKOUT_BODY_PERCENT and candle["close"] > last_3_high:
+        if volume_ratio >= STRONG_BREAKOUT_VOLUME_RATIO:
+            r = get_dynamic_r(primary_candles, DYNAMIC_R_LOOKBACK)
+            if r is None or r <= 0:
+                r = max(body, MIN_R_VALUE)
+            
+            rsi_str = f"{rsi:.1f}" if rsi_available else "N/A"
+            log.info(f"📈 STRONG BREAKOUT LONG: close={candle['close']:.4f}, body={body_percent:.1f}%, vol={volume_ratio:.2f}x, RSI={rsi_str}")
+            return {
+                "direction": "LONG",
+                "entry": candle["close"],
+                "candle": candle,
+                "r": r,
+                "touch_type": "STRONG_BREAKOUT_LONG",
+                "volume_ratio": volume_ratio,
+                "rsi": rsi,
+                "body_percent": body_percent
+            }
+
+    # ================================================================
+    # ۲. BREAKOUT LONG (با RSI منعطف)
+    # ================================================================
+    if is_bullish and candle["close"] > last_3_high * 1.001:
+        if body_percent < TREND_MIN_BODY_PERCENT:
+            return None
+        
+        # ✅ اگر RSI موجود باشد، بررسی کن، در غیر این صورت رد کن
+        if rsi_available and (rsi < TREND_MIN_RSI or rsi > TREND_MAX_RSI):
+            return None
+        
+        if volume_ratio is not None and volume_ratio < TREND_MIN_VOLUME_RATIO:
+            return None
+        
+        r = get_dynamic_r(primary_candles, DYNAMIC_R_LOOKBACK)
+        if r is None or r <= 0:
+            r = max(body, MIN_R_VALUE)
+        
+        rsi_str = f"{rsi:.1f}" if rsi_available else "N/A"
+        log.info(f"📈 TREND BREAKOUT LONG: close={candle['close']:.4f}, body={body_percent:.1f}%, RSI={rsi_str}")
+        return {
+            "direction": "LONG",
+            "entry": candle["close"],
+            "candle": candle,
+            "r": r,
+            "touch_type": "TREND_BREAKOUT_LONG",
+            "volume_ratio": volume_ratio,
+            "rsi": rsi,
+            "body_percent": body_percent
+        }
+
+    # ================================================================
+    # ۳. STRONG BREAKDOWN SHORT (بدون RSI - با حجم بالا)
+    # ================================================================
+    if not is_bullish and body_percent >= STRONG_BREAKOUT_BODY_PERCENT and candle["close"] < last_3_low:
+        if volume_ratio >= STRONG_BREAKOUT_VOLUME_RATIO:
+            r = get_dynamic_r(primary_candles, DYNAMIC_R_LOOKBACK)
+            if r is None or r <= 0:
+                r = max(body, MIN_R_VALUE)
+            
+            rsi_str = f"{rsi:.1f}" if rsi_available else "N/A"
+            log.info(f"📉 STRONG BREAKDOWN SHORT: close={candle['close']:.4f}, body={body_percent:.1f}%, vol={volume_ratio:.2f}x, RSI={rsi_str}")
+            return {
+                "direction": "SHORT",
+                "entry": candle["close"],
+                "candle": candle,
+                "r": r,
+                "touch_type": "STRONG_BREAKDOWN_SHORT",
+                "volume_ratio": volume_ratio,
+                "rsi": rsi,
+                "body_percent": body_percent
+            }
+
+    # ================================================================
+    # ۴. BREAKDOWN SHORT (با RSI منعطف)
+    # ================================================================
+    if not is_bullish and candle["close"] < last_3_low * 0.999:
+        if body_percent < TREND_MIN_BODY_PERCENT:
+            return None
+        
+        # ✅ اگر RSI موجود باشد، بررسی کن، در غیر این صورت رد کن
+        if rsi_available and (rsi < TREND_SHORT_MIN_RSI or rsi > TREND_SHORT_MAX_RSI):
+            return None
+        
+        if volume_ratio is not None and volume_ratio < TREND_MIN_VOLUME_RATIO:
+            return None
+        
+        r = get_dynamic_r(primary_candles, DYNAMIC_R_LOOKBACK)
+        if r is None or r <= 0:
+            r = max(body, MIN_R_VALUE)
+        
+        rsi_str = f"{rsi:.1f}" if rsi_available else "N/A"
+        log.info(f"📉 TREND BREAKDOWN SHORT: close={candle['close']:.4f}, body={body_percent:.1f}%, RSI={rsi_str}")
+        return {
+            "direction": "SHORT",
+            "entry": candle["close"],
+            "candle": candle,
+            "r": r,
+            "touch_type": "TREND_BREAKDOWN_SHORT",
+            "volume_ratio": volume_ratio,
+            "rsi": rsi,
+            "body_percent": body_percent
+        }
+
+    return None
+
+
+# ============================================================================
+# REVERSAL SIGNAL DETECTION (برای پایان روند)
+# ============================================================================
+
+def detect_reversal_signal(candle):
+    """
+    تشخیص سیگنال‌های برگشتی (Hammer / Shooting Star)
+    - برای تشخیص پایان روند و تغییر جهت
+    """
+    if candle is None:
+        return None
+
+    if candle.get("confirmed", 0) != 1:
+        return None
+
+    if len(primary_candles) < 4:
+        return None
+
+    # ================================================================
+    # ✅ RANGE FILTER
+    # ================================================================
+    if USE_RANGE_FILTER and is_range_market(primary_candles):
+        return None
+
+    body = abs(candle["close"] - candle["open"])
+    total_range = candle["high"] - candle["low"]
+    
+    if total_range == 0:
+        return None
+    
+    body_percent = (body / total_range) * 100
+    
+    if body_percent < REVERSAL_MIN_BODY_PERCENT:
+        return None
+    
+    upper_shadow = candle["high"] - max(candle["close"], candle["open"])
+    lower_shadow = min(candle["close"], candle["open"]) - candle["low"]
+    is_bullish = candle["close"] > candle["open"]
+
+    is_hammer = is_bullish and lower_shadow >= SHADOW_MULTIPLIER * body and upper_shadow <= body
+    is_shooting_star = not is_bullish and upper_shadow >= SHADOW_MULTIPLIER * body and lower_shadow <= body
+    
+    if not is_hammer and not is_shooting_star:
+        return None
+    
+    is_strong_hammer = is_bullish and lower_shadow >= STRONG_PATTERN_MULTIPLIER * body and upper_shadow <= body
+    is_strong_shooting_star = not is_bullish and upper_shadow >= STRONG_PATTERN_MULTIPLIER * body and lower_shadow <= body
+
+    rsi = calculate_rsi(primary_candles, 6)
+    rsi_available = rsi is not None
+    
+    # ✅ LONG: اگر RSI موجود باشد، بررسی کن، در غیر این صورت رد کن
+    if is_hammer and rsi_available and rsi >= RSI_OVERSOLD:
+        return None
+    
+    # ✅ SHORT: اگر RSI موجود باشد، بررسی کن، در غیر این صورت رد کن
+    if is_shooting_star and rsi_available and rsi <= RSI_OVERBOUGHT:
+        return None
+
+    # بررسی حجم
+    volume_ratio = None
+    is_strong_pattern = False
+    
+    if len(primary_candles) >= 6:
+        last_5_volumes = [c.get("samples", 0) for c in primary_candles[-6:-1]]
+        avg_volume = sum(last_5_volumes) / len(last_5_volumes) if last_5_volumes else 1
+        current_volume = candle.get("samples", 0)
+        volume_ratio = current_volume / avg_volume if avg_volume > 0 else 0
+        
+        if (is_hammer and is_strong_hammer) or (is_shooting_star and is_strong_shooting_star):
+            is_strong_pattern = True
+        else:
+            if volume_ratio < VOLUME_SPIKE_THRESHOLD:
+                return None
+
+    r = get_dynamic_r(primary_candles, DYNAMIC_R_LOOKBACK)
+    if r is None or r <= 0:
+        r = max(body, MIN_R_VALUE)
+
+    if is_hammer:
+        rsi_str = f"{rsi:.1f}" if rsi_available else "N/A"
+        log.info(f"🔨 REVERSAL HAMMER: close={candle['close']:.4f}, body={body_percent:.1f}%, RSI={rsi_str}")
+        return {
+            "direction": "LONG",
+            "entry": candle["close"],
+            "candle": candle,
+            "r": r,
+            "touch_type": "REVERSAL_HAMMER" + ("_STRONG" if is_strong_pattern else ""),
+            "volume_ratio": volume_ratio,
+            "rsi": rsi,
+            "body_percent": body_percent
+        }
+    
+    if is_shooting_star:
+        rsi_str = f"{rsi:.1f}" if rsi_available else "N/A"
+        log.info(f"⭐ REVERSAL SHOOTING STAR: close={candle['close']:.4f}, body={body_percent:.1f}%, RSI={rsi_str}")
+        return {
+            "direction": "SHORT",
+            "entry": candle["close"],
+            "candle": candle,
+            "r": r,
+            "touch_type": "REVERSAL_SHOOTING_STAR" + ("_STRONG" if is_strong_pattern else ""),
+            "volume_ratio": volume_ratio,
+            "rsi": rsi,
+            "body_percent": body_percent
+        }
+
+    return None
+
+
+# ============================================================================
+# CHECK IF SIGNAL IS ALLOWED (با قوانین موج‌سواری)
+# ============================================================================
+
+def is_signal_allowed(candle, direction):
+    global wave_state
+
+    # ================================================================
+    # ۱. بررسی CoolDown
+    # ================================================================
+    cooldown = wave_state.get("cooldown_candles_remaining", 0)
+    if cooldown > 0:
+        log.info(f"⏸️ COOLDOWN ACTIVE: {cooldown} candles remaining")
+        return False
+
+    # ================================================================
+    # ۲. بررسی سیگنال هم‌جهت پشت سر هم
+    # ================================================================
+    last_direction = wave_state.get("last_signal_direction")
+    consecutive = wave_state.get("consecutive_same_direction", 0)
+
+    if last_direction == direction:
+        if consecutive >= MAX_CONSECUTIVE_SAME_DIRECTION:
+            log.info(f"⛔ MAX CONSECUTIVE SAME DIRECTION: {consecutive}/{MAX_CONSECUTIVE_SAME_DIRECTION}")
+            return False
+
+    # ================================================================
+    # ۳. بررسی فاصله قیمتی
+    # ================================================================
+    last_price = wave_state.get("last_signal_price")
+    if last_price is not None:
+        price_diff = abs(candle["close"] - last_price) / last_price * 100
+        if price_diff < MIN_PRICE_DIFF_PERCENT:
+            log.info(f"⏸️ PRICE DIFF TOO SMALL: {price_diff:.2f}% < {MIN_PRICE_DIFF_PERCENT}%")
+            return False
+
+    return True
+
+
+# ============================================================================
+# UPDATE WAVE STATE AFTER SIGNAL
+# ============================================================================
+
+def update_wave_state_after_signal(candle, direction):
+    global wave_state
+
+    last_direction = wave_state.get("last_signal_direction")
+    consecutive = wave_state.get("consecutive_same_direction", 0)
+
+    if last_direction == direction:
+        wave_state["consecutive_same_direction"] = consecutive + 1
+    else:
+        wave_state["consecutive_same_direction"] = 1
+
+    wave_state["last_signal_time"] = utc_now()
+    wave_state["last_signal_candle"] = candle["time"]
+    wave_state["last_signal_direction"] = direction
+    wave_state["last_signal_price"] = candle["close"]
+    wave_state["cooldown_candles_remaining"] = SIGNAL_COOLDOWN_CANDLES
+    wave_state["signal_count"] = wave_state.get("signal_count", 0) + 1
+
+    save_wave_state()
+
+
+# ============================================================================
+# UPDATE COOLDOWN
+# ============================================================================
+
+def update_cooldown():
+    global wave_state
+    cooldown = wave_state.get("cooldown_candles_remaining", 0)
+    if cooldown > 0:
+        wave_state["cooldown_candles_remaining"] = cooldown - 1
+        if wave_state["cooldown_candles_remaining"] == 0:
+            save_wave_state()
+
+
+# ============================================================================
+# BUILD SIGNAL
+# ============================================================================
+
+def build_signal(strategy_signal, candle):
+    if strategy_signal is None or candle is None:
+        return None
+
+    direction = strategy_signal.get("direction")
+    if direction not in ("LONG", "SHORT"):
+        return None
+
+    entry = float(strategy_signal["entry"])
+    r = float(strategy_signal["r"])
+
+    if r <= 0:
+        r = MIN_R_VALUE
+
+    candle_time = candle["time"]
+    signal_id = f"{BOT_ID}-{direction}-{candle_time.strftime('%Y%m%d%H%M')}"
+
+    # محاسبه استاپ و TP (هر دو 1R)
+    if direction == "LONG":
+        initial_stop = entry - r
+        initial_tp = entry + r
+    else:
+        initial_stop = entry + r
+        initial_tp = entry - r
+
+    signal = {
+        "signal_id": signal_id,
+        "time": utc_now(),
+        "source_candle": candle_time,
+        "symbol": SYMBOL,
+        "reference_market": "XT ETHUSDT FUTURES",
+        "direction": direction,
+        "reference_entry": float(entry),
+        "r": float(r),
+        "initial_risk": float(r),
+        "initial_stop": float(initial_stop),
+        "initial_tp": float(initial_tp),
+        "entry_type": strategy_signal.get("touch_type", "TREND"),
+        "touch_price": float(entry),
+        "bot_id": BOT_ID,
+        "candles_used": len(primary_candles),
+        "volume_ratio": strategy_signal.get("volume_ratio"),
+        "rsi": strategy_signal.get("rsi"),
+        "body_percent": strategy_signal.get("body_percent")
+    }
+
+    return signal
+
+
+# ============================================================================
+# EMIT SIGNAL
+# ============================================================================
+
+def emit_signal(signal, candle):
+    if signal is None or candle is None:
+        return
+
+    direction = signal["direction"]
+
+    # ================================================================
+    # بررسی مجوز سیگنال
+    # ================================================================
+    if not is_signal_allowed(candle, direction):
+        return
+
+    # ================================================================
+    # ارسال سیگنال
+    # ================================================================
+    save_signal(signal, "WAITING_FOR_PLATFORM")
+    queue_platform_signal(signal)
+
+    update_signal_status(
+        signal,
+        "WAITING_FOR_PLATFORM",
+        "WAITING_FOR_PLATFORM",
+        "ADDED_TO_PENDING"
+    )
+
+    result = send_signal_to_platform(signal)
+
+    # ================================================================
+    # به‌روزرسانی Wave State
+    # ================================================================
+    update_wave_state_after_signal(candle, direction)
+
+    # ================================================================
+    # نمایش سیگنال
+    # ================================================================
+    print()
+    print()
+    print("=" * 78)
+    print(f"🔥 REZA BOT {BOT_ID} — NEW ETH SIGNAL (WAVE RIDING OPTIMIZED)")
+    print("=" * 78)
+    print(f"SIGNAL ID        : {signal['signal_id']}")
+    print(f"TIME             : {format_utc(signal['time'])}")
+    print(f"SYMBOL           : {signal['symbol']}")
+    print(f"DIRECTION        : {signal['direction']}")
+    print(f"ENTRY TYPE       : {signal['entry_type']}")
+    print(f"REFERENCE ENTRY  : {signal['reference_entry']:.4f}")
+    print(f"R                : {signal['r']:.4f}")
+    print(f"INITIAL STOP     : {signal['initial_stop']:.4f}")
+    print(f"INITIAL TP       : {signal['initial_tp']:.4f} (1R) ✅")
+    print(f"CONSECUTIVE      : {wave_state['consecutive_same_direction']}/{MAX_CONSECUTIVE_SAME_DIRECTION}")
+    print(f"COOLDOWN         : {SIGNAL_COOLDOWN_CANDLES} candles")
+    if signal.get('volume_ratio') is not None:
+        print(f"VOLUME RATIO     : {signal['volume_ratio']:.2f}x")
+    if signal.get('rsi') is not None:
+        print(f"RSI              : {signal['rsi']:.1f}")
+    if signal.get('body_percent') is not None:
+        print(f"BODY PERCENT     : {signal['body_percent']:.1f}%")
+    print(f"SOURCE CANDLE    : {format_utc(signal['source_candle'])}")
+    print("TP/SL            : EXECUTION PLATFORM")
+    print("EXECUTION        : SEPARATE PLATFORM")
+
+    if result.get("success"):
+        print("PLATFORM         : CONNECTED")
+        print("SIGNAL           : RECEIVED / ACKNOWLEDGED")
+
+    else:
+        print("PLATFORM         : NOT AVAILABLE")
+        print("SIGNAL           : STORED IN PENDING QUEUE")
+
+    with platform_lock:
+        pending_count = platform_state["pending_count"]
+
+    print(f"PENDING COUNT    : {pending_count}")
+    print("=" * 78)
+    print()
+
+
+# ============================================================================
+# LIVE PRICE PROCESSOR
+# ============================================================================
+
+def process_live_market(market):
+    global primary_candles, current_candle, last_bucket, last_price
+
+    price = float(market["last"])
+    now = parse_utc_datetime(market.get("ts"))
+
+    if now is None:
+        now = utc_now()
+
+    last_price = price
+
+    save_price(now, market["last"], market.get("mark"), market.get("index"), market.get("funding"))
+
+    bucket = bucket_5m(now)
+
+    if current_candle is None:
+        current_candle = start_new_candle(bucket, price)
+        last_bucket = bucket
+        return
+
+    if bucket == last_bucket:
+        update_candle(current_candle, price)
+
+    else:
+        # ============================================================
+        # کندل قبلی بسته شد
+        # ============================================================
+        previous = close_candle(current_candle)
+        previous["confirmed"] = 1
+
+        if not primary_candles or previous["time"] > primary_candles[-1]["time"]:
+            primary_candles.append(previous)
+
+            if len(primary_candles) > MAX_PRIMARY_CANDLES:
+                primary_candles = primary_candles[-MAX_PRIMARY_CANDLES:]
+
+            save_closed_candle(previous)
+
+            print(f"5M CLOSED | {format_utc(previous['time'])} | "
+                  f"O={previous['open']:.4f} H={previous['high']:.4f} L={previous['low']:.4f} C={previous['close']:.4f} | "
+                  f"samples={previous.get('samples', 0)} | history={len(primary_candles)}")
+
+        # ============================================================
+        # ✅ کاهش CoolDown
+        # ============================================================
+        update_cooldown()
+
+        # ============================================================
+        # ✅ ۱. بررسی سیگنال روندی
+        # ============================================================
+        trend_signal = detect_trend_signals(previous)
+        if trend_signal:
+            signal = build_signal(trend_signal, previous)
+            if signal:
+                emit_signal(signal, previous)
+
+        # ============================================================
+        # ✅ ۲. بررسی سیگنال برگشتی (اگر روندی نبود)
+        # ============================================================
+        elif not wave_state.get("cooldown_candles_remaining", 0) > 0:
+            reversal_signal = detect_reversal_signal(previous)
+            if reversal_signal:
+                signal = build_signal(reversal_signal, previous)
+                if signal:
+                    emit_signal(signal, previous)
+
+        # ============================================================
+        # شروع کندل جدید
+        # ============================================================
+        current_candle = start_new_candle(bucket, price)
+        last_bucket = bucket
+
+
+# ============================================================================
+# LIVE STATUS
+# ============================================================================
+
+def print_live_status():
+    if current_candle is None:
+        return
+
+    cooldown = wave_state.get("cooldown_candles_remaining", 0)
+    consecutive = wave_state.get("consecutive_same_direction", 0)
+    last_direction = wave_state.get("last_signal_direction", "NONE")
+    signal_count = wave_state.get("signal_count", 0)
+
+    with platform_lock:
+        platform_online = platform_state["online"]
+        pending_count = platform_state["pending_count"]
+
+    platform_status = "CONNECTED" if platform_online else "WAITING"
+    range_status = "RANGE" if (USE_RANGE_FILTER and is_range_market(primary_candles)) else "TREND"
+
+    print(f"{utc_now().strftime('%H:%M:%S')} UTC | "
+          f"XT {DISPLAY_SYMBOL} | LAST={last_price:.4f} | "
+          f"LIVE5M O={current_candle['open']:.4f} H={current_candle['high']:.4f} L={current_candle['low']:.4f} C={current_candle['close']:.4f} | "
+          f"SAMPLES={current_candle['samples']} | CLOSED={len(primary_candles)} | "
+          f"MARKET={range_status} | "
+          f"LAST={last_direction} | CONSEC={consecutive}/{MAX_CONSECUTIVE_SAME_DIRECTION} | COOLDOWN={cooldown} | "
+          f"TOTAL={signal_count} | PLATFORM={platform_status} | PENDING={pending_count}")
+
+
+# ============================================================================
+# WEBHOOK HANDLER
+# ============================================================================
+
+class WebhookHandler(BaseHTTPRequestHandler):
+
+    def log_message(self, format, *args):
+        return
+
+    def send_json(self, status_code, payload):
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status_code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):
+        if self.path == WEBHOOK_PATH:
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                raw = self.rfile.read(length)
+                data = json.loads(raw.decode("utf-8"))
+
+                event = data.get("event")
+                signal_id = data.get("signal_id")
+
+                log.info("📡 WEBHOOK RECEIVED: event=%s signal_id=%s", event, signal_id)
+
+                append_webhook_log(data)
+
+                print()
+                print("=" * 78)
+                print("📡 WEBHOOK RECEIVED FROM EXECUTION PLATFORM")
+                print("=" * 78)
+                print(f"EVENT           : {event}")
+                print(f"SIGNAL ID       : {signal_id}")
+                print(f"DIRECTION       : {data.get('direction')}")
+                print(f"ENTRY PRICE     : {data.get('entry_price')}")
+                print(f"EXIT PRICE      : {data.get('exit_price')}")
+                print(f"P&L             : {data.get('pnl')} USDT")
+                print(f"P&L %           : {data.get('pnl_percent')}%")
+                print(f"REASON          : {data.get('reason')}")
+                print(f"TOTAL R         : {data.get('total_r', 0):.1f}R")
+                print(f"CLOSE TIME      : {data.get('close_time')}")
+                print("=" * 78)
+                print()
+
+                self.send_json(200, {
+                    "status": "OK",
+                    "message": "Webhook received",
+                    "signal_id": signal_id
+                })
+
+            except Exception as exc:
+                log.error("WEBHOOK HANDLER ERROR: %s", exc)
+                self.send_json(400, {"status": "ERROR", "error": str(exc)})
+
+        else:
+            self.send_json(404, {"error": "NOT_FOUND"})
+
+    def do_GET(self):
+        if self.path == "/health":
+            self.send_json(200, {
+                "bot": f"REZA BOT {BOT_ID}",
+                "version": VERSION,
+                "project": PROJECT,
+                "symbol": DISPLAY_SYMBOL,
+                "status": "ONLINE",
+                "strategy": "WAVE RIDING OPTIMIZED",
+                "cooldown_candles": SIGNAL_COOLDOWN_CANDLES,
+                "max_consecutive_same_direction": MAX_CONSECUTIVE_SAME_DIRECTION,
+                "min_price_diff_percent": MIN_PRICE_DIFF_PERCENT,
+                "range_filter": USE_RANGE_FILTER,
+                "range_threshold": RANGE_THRESHOLD,
+                "trend_min_body_percent": TREND_MIN_BODY_PERCENT,
+                "trend_rsi_range_long": f"{TREND_MIN_RSI}-{TREND_MAX_RSI}",
+                "trend_rsi_range_short": f"{TREND_SHORT_MIN_RSI}-{TREND_SHORT_MAX_RSI}",
+                "strong_breakout_body_percent": STRONG_BREAKOUT_BODY_PERCENT,
+                "strong_breakout_volume_ratio": STRONG_BREAKOUT_VOLUME_RATIO,
+                "shadow_multiplier": SHADOW_MULTIPLIER,
+                "tp_r_multiple": 1.0,
+                "total_signals": wave_state.get("signal_count", 0),
+                "last_direction": wave_state.get("last_signal_direction", "NONE")
+            })
+        else:
+            self.send_json(404, {"error": "NOT_FOUND"})
+
+
+def append_webhook_log(data):
+    with open(WEBHOOK_LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(json.dumps(data, ensure_ascii=False, default=str) + "\n")
+
+
+def start_webhook_server():
+    try:
+        server = ThreadingTCPServer((WEBHOOK_HOST, WEBHOOK_PORT), WebhookHandler)
+        server.allow_reuse_address = True
+        server.daemon_threads = True
+
+        thread = threading.Thread(target=server.serve_forever, daemon=True, name="WEBHOOK-SERVER")
+        thread.start()
+
+        print()
+        print("=" * 78)
+        print("🌐 WEBHOOK SERVER STARTED")
+        print("=" * 78)
+        print(f"WEBHOOK LISTENER : http://{WEBHOOK_HOST}:{WEBHOOK_PORT}{WEBHOOK_PATH}")
+        print(f"HEALTH           : http://{WEBHOOK_HOST}:{WEBHOOK_PORT}/health")
+        print("=" * 78)
+
+        return True
+
+    except OSError as exc:
+        if getattr(exc, "errno", None) == 98:
+            print()
+            print("=" * 78)
+            print("⚠️ WEBHOOK SERVER: PORT 8765 IS ALREADY IN USE")
+            print("=" * 78)
+            return False
+        raise
+
+
+# ============================================================================
+# TEST CONNECTION
+# ============================================================================
+
+def test_connection():
+    print()
+    print("=" * 78)
+    print(f"XT ETHUSDT FUTURES LIVE MARKET DIAGNOSTIC - WAVE RIDING OPTIMIZED")
+    print("=" * 78)
+
+    instrument = load_instrument()
+
+    print(f"INSTRUMENT       : {SYMBOL}")
+    print(f"STATE            : {instrument['state']}")
+    print(f"TICK SIZE        : {instrument['price_tick']}")
+    print(f"LOT SIZE         : {instrument['lot_size']}")
+    print(f"MIN SIZE         : {instrument['min_size']}")
+
+    market = get_market_snapshot()
+
+    print(f"LIVE PRICE       : {market['last']:.4f}")
+    print(f"LIVE TIMESTAMP   : {format_utc(market['ts'])}")
+
+    if market["mark"] is not None:
+        print(f"MARK PRICE       : {market['mark']:.4f}")
+
+    if market["index"] is not None:
+        print(f"INDEX PRICE      : {market['index']:.4f}")
+
+    print("PUBLIC API       : OK")
+    print("=" * 78)
+    print()
+
+
+def test_platform_connection():
+    print()
+    print("=" * 78)
+    print(f"REZA EXECUTION PLATFORM CONNECTION - {BOT_ID}")
+    print("=" * 78)
+
+    print(f"PLATFORM URL     : {PLATFORM_BASE_URL}")
+    print(f"HEALTH ENDPOINT  : {PLATFORM_HEALTH_PATH}")
+    print(f"SIGNAL ENDPOINT  : {PLATFORM_SIGNAL_PATH}")
+
+    if not PLATFORM_ENABLED:
+        print("STATUS           : DISABLED")
+        print("=" * 78)
+        print()
+        return False
+
+    online = platform_health_check()
+
+    if online:
+        print("STATUS           : CONNECTED")
+        print("SIGNAL CHANNEL   : READY")
+
+    else:
+        with platform_lock:
+            error = platform_state["last_error"]
+
+        print("STATUS           : NOT CONNECTED")
+        print(f"REASON           : {error}")
+        print("SIGNALS          : WILL BE QUEUED")
+
+    print("=" * 78)
+    print()
+
+    return online
+
+
+# ============================================================================
+# STARTUP SUMMARY
+# ============================================================================
+
+def print_startup_summary():
+    print()
+    print("=" * 78)
+    print(f"REZA BOT {VERSION} — WAVE RIDING OPTIMIZED — ETH ✅")
+    print("=" * 78)
+
+    print("PROJECT          : PROJECT 4")
+    print(f"REFERENCE MARKET : XT {DISPLAY_SYMBOL} FUTURES")
+    print("TIMEFRAME        : 5M")
+    print("LIVE DATA        : XT LIVE MARKET")
+    print()
+    print("STRATEGY         : WAVE RIDING OPTIMIZED (موج‌سواری بهینه)")
+    print("  - NO HYPER / NO SESSION LOCK")
+    print("  - بررسی هر کندل بسته شده")
+    print("  - تشخیص شروع روند با بدنه + RSI + حجم")
+    print("  - تشخیص حرکت‌های انفجاری با شکست قوی")
+    print("  - تشخیص برگشت با الگوهای کندلی")
+    print()
+    print("OPTIMIZED PARAMETERS:")
+    print(f"  - TREND MIN BODY     : {TREND_MIN_BODY_PERCENT}%")
+    print(f"  - RSI RANGE LONG     : {TREND_MIN_RSI}-{TREND_MAX_RSI}")
+    print(f"  - RSI RANGE SHORT    : {TREND_SHORT_MIN_RSI}-{TREND_SHORT_MAX_RSI}")
+    print(f"  - STRONG BREAKOUT    : {STRONG_BREAKOUT_BODY_PERCENT}% + VOLUME {STRONG_BREAKOUT_VOLUME_RATIO}x")
+    print(f"  - SHADOW MULTIPLIER  : {SHADOW_MULTIPLIER}")
+    print(f"  - COOLDOWN           : {SIGNAL_COOLDOWN_CANDLES} candles")
+    print(f"  - RANGE THRESHOLD    : {RANGE_THRESHOLD}")
+    print()
+    print("SIGNAL RULES:")
+    print(f"  - COOLDOWN              : {SIGNAL_COOLDOWN_CANDLES} candles after each signal")
+    print(f"  - MAX SAME DIRECTION    : {MAX_CONSECUTIVE_SAME_DIRECTION}")
+    print(f"  - MIN PRICE DIFF        : {MIN_PRICE_DIFF_PERCENT}%")
+    print()
+    print("SIGNAL TYPES:")
+    print("  1. STRONG BREAKOUT (بدنه ≥ 65% + حجم ≥ 1.2× → RSI IGNORED)")
+    print("  2. TREND BREAKOUT (بدنه ≥ 35% + RSI منعطف)")
+    print("  3. REVERSAL (Hammer/Shooting Star + RSI)")
+    print()
+    print("TP/SL            : TP=1R, SL=1R (توسط پلتفرم اجرا)")
+    print("FIXED RISK       : 0.25 USDT per trade")
+    print("=" * 78)
+    print()
+
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+def main():
+    global primary_candles, current_candle, last_bucket, last_price
+
+    ensure_files()
+    load_wave_state()
+
+    print_startup_summary()
+
+    start_webhook_server()
+
+    test_platform_connection()
+    start_platform_monitor()
+
+    pending_at_startup = read_platform_queue()
+
+    with platform_lock:
+        platform_state["pending_count"] = len(pending_at_startup)
+
+    if pending_at_startup:
+        print()
+        print("=" * 78)
+        print("PENDING PLATFORM SIGNALS")
+        print(f"COUNT            : {len(pending_at_startup)}")
+        print("STATUS           : WILL RETRY AUTOMATICALLY")
+        print("=" * 78)
+        print()
+
+    test_connection()
+
+    primary_candles = []
+
+    print()
+    print("=" * 78)
+    print("WAVE RIDING OPTIMIZED STARTUP — ETH")
+    print("=" * 78)
+
+    print("HISTORICAL       : DISABLED")
+    print("MARKET           : XT LIVE")
+    print("CLOSED CANDLES   : BOT WILL BUILD THEM")
+    print("STRATEGY         : WAVE RIDING OPTIMIZED")
+    print("NO HYPER         : YES")
+    print("NO SESSION LOCK  : YES")
+    print("SIGNAL           : ENABLED AFTER FIRST CLOSED CANDLE")
+    print(f"COOLDOWN         : {SIGNAL_COOLDOWN_CANDLES} candles")
+    print(f"MAX SAME DIR     : {MAX_CONSECUTIVE_SAME_DIRECTION}")
+    print("PLATFORM         : CONNECTED / WAITING")
+    print("WEBHOOK SERVER   : RUNNING")
+    print("=" * 78)
+    print()
+
+    initialize_current_candle_from_xt()
+
+    print(f"XT LIVE MARKET LOOP STARTED FOR WAVE RIDING OPTIMIZED (ETH).")
+    print("STRATEGY         : WAVE RIDING OPTIMIZED")
+    print("NO HYPER         : YES")
+    print("NO SESSION LOCK  : YES")
+    print("COOLDOWN         : 2 candles")
+    print("MAX SAME DIR     : 2")
+    print("PLATFORM         : ENABLED")
+    print("BOT ORDERS       : DISABLED")
+    print("WEBHOOK SERVER   : RUNNING")
+    print()
+
+    while running:
+        cycle_start = time.time()
+
+        try:
+            market = get_market_snapshot()
+            process_live_market(market)
+
+            print_live_status()
+
+        except KeyboardInterrupt:
+            raise
+
+        except requests.RequestException as exc:
+            print("[NETWORK ERROR]", type(exc).__name__, exc)
+
+        except Exception as exc:
+            print("[ERROR]", type(exc).__name__, exc)
+            log.exception("Live loop error")
+
+        elapsed = time.time() - cycle_start
+        remaining = POLL_SECONDS - elapsed
+
+        if remaining > 0:
+            time.sleep(remaining)
+
+
+def initialize_current_candle_from_xt():
+    global current_candle, last_bucket
+
+    market = get_market_snapshot()
+    now = market["ts"]
+    price = market["last"]
+
+    bucket = bucket_5m(now)
+
+    current_candle = start_new_candle(bucket, price)
+    last_bucket = current_candle["time"]
+
+
+# ============================================================================
+# ENTRY POINT
+# ============================================================================
+
+if __name__ == "__main__":
+    try:
+        main()
+
+    except KeyboardInterrupt:
+        print()
+        print("REZA BOT WAVE RIDING OPTIMIZED STOPPED BY USER.")
+
+    except Exception as exc:
+        print()
+        print("=" * 78)
+        print("FATAL ERROR")
+        print("=" * 78)
+        print(f"{type(exc).__name__}: {exc}")
+        print("=" * 78)
